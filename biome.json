@@ -6,7 +6,7 @@
 		"useIgnoreFile": true
 	},
 	"files": {
-		"includes": ["**", "!!**/dist", "!!demo/**", "!!docs/**", "!!index.html"]
+		"includes": ["**", "!!**/dist", "!!demo", "!!docs", "!!index.html"]
 	},
 	"formatter": {
 		"enabled": true,
@@ -18,7 +18,12 @@
 		"rules": {
 			"recommended": true,
 			"style": {
-				"noNonNullAssertion": "warn"
+				"noNonNullAssertion": "warn",
+				"useBlockStatements": "error",
+				"useReadonlyClassProperties": "error"
+			},
+			"nursery": {
+				"useConsistentTestIt": "error"
 			}
 		}
 	},
@@ -34,5 +39,27 @@
 				"organizeImports": "on"
 			}
 		}
-	}
+	},
+	"overrides": [
+		{
+			"includes": ["tests/**"],
+			"linter": {
+				"rules": {
+					"suspicious": {
+						"noExplicitAny": "off"
+					}
+				}
+			}
+		},
+		{
+			"includes": ["tests/**/*.spec.*"],
+			"linter": {
+				"rules": {
+					"nursery": {
+						"useConsistentTestIt": "off"
+					}
+				}
+			}
+		}
+	]
 }

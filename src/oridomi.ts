@@ -473,9 +473,14 @@ class OriDomi {
 	// Internal config
 	private _config: OriDomiOptions = { ...defaults };
 	private _queue: QueueEntry[] = [];
-	private _panels: Record<Anchor, HTMLDivElement[]> = { left: [], right: [], top: [], bottom: [] };
-	private _stages: Record<Anchor, HTMLDivElement> = {} as Record<Anchor, HTMLDivElement>;
-	private _shaders: Record<Anchor, Record<Anchor, HTMLDivElement[]>> = {} as Record<
+	private readonly _panels: Record<Anchor, HTMLDivElement[]> = {
+		left: [],
+		right: [],
+		top: [],
+		bottom: [],
+	};
+	private readonly _stages: Record<Anchor, HTMLDivElement> = {} as Record<Anchor, HTMLDivElement>;
+	private readonly _shaders: Record<Anchor, Record<Anchor, HTMLDivElement[]>> = {} as Record<
 		Anchor,
 		Record<Anchor, HTMLDivElement[]>
 	>;
@@ -485,9 +490,9 @@ class OriDomi {
 	private _touchEnabled = false;
 	private _touchStarted = false;
 	private _touchAxis: "x" | "y" = "x";
-	private _stageHolder!: HTMLDivElement;
-	private _cloneEl!: HTMLDivElement;
-	private _pendingTimers: Set<ReturnType<typeof setTimeout>> = new Set();
+	private readonly _stageHolder!: HTMLDivElement;
+	private readonly _cloneEl!: HTMLDivElement;
+	private readonly _pendingTimers: Set<ReturnType<typeof setTimeout>> = new Set();
 
 	// Touch tracking state
 	private _xLast = 0;
@@ -497,7 +502,9 @@ class OriDomi {
 	private _origParentTransformStyle = "";
 
 	constructor(el: string | HTMLElement, options: Partial<OriDomiInputOptions> = {}) {
-		if (!isSupported) return;
+		if (!isSupported) {
+			return;
+		}
 
 		if (typeof el === "string") {
 			this.el = document.querySelector(el) as HTMLElement;
@@ -638,7 +645,7 @@ class OriDomi {
 							offsets[anchor!]?.push(0);
 						} else {
 							offsets[anchor!]?.push(
-								(offsets[anchor!]?.[prev]! - 100) *
+								(offsets[anchor!]![prev]! - 100) *
 									(panelConfigArr[prev]! / panelConfigArr[index]!),
 							);
 						}
@@ -669,7 +676,7 @@ class OriDomi {
 					content.style[metric] = sizePercent;
 					setStyleProp(content.style, `max${capitalize(metric)}`, sizePercent);
 
-					setStyleProp(content.style, anchorSet[0]!, `${offsets[anchorSet[0]!]?.[index]!}%`);
+					setStyleProp(content.style, anchorSet[0]!, `${offsets[anchorSet[0]!]![index]!}%`);
 
 					this._transformPanel(panel, 0, anchor!);
 					this._panels[anchor!][panelN] = panel;
@@ -715,11 +722,15 @@ class OriDomi {
 
 	// Internal Methods (arrow function class fields for bound methods)
 
-	private _step = (): void => {
-		if (this._inTrans || !this._queue.length) return;
+	private readonly _step = (): void => {
+		if (this._inTrans || !this._queue.length) {
+			return;
+		}
 		this._inTrans = true;
 		const [fn, angle, anchor, options] = this._queue.shift()!;
-		if (this.isFrozen) this.unfreeze();
+		if (this.isFrozen) {
+			this.unfreeze();
+		}
 
 		const next = (): void => {
 			this._setCallback({ angle, anchor, options, fn });
@@ -750,13 +761,25 @@ class OriDomi {
 	};
 
 	private _isIdenticalOperation(op: LastOperation & { options: EffectOptions }): boolean {
-		if (!this._lastOp.fn) return true;
-		if (this._lastOp.reset) return false;
-		if (this._lastOp.angle !== op.angle) return false;
-		if (this._lastOp.anchor !== op.anchor) return false;
-		if (this._lastOp.fn !== op.fn) return false;
+		if (!this._lastOp.fn) {
+			return true;
+		}
+		if (this._lastOp.reset) {
+			return false;
+		}
+		if (this._lastOp.angle !== op.angle) {
+			return false;
+		}
+		if (this._lastOp.anchor !== op.anchor) {
+			return false;
+		}
+		if (this._lastOp.fn !== op.fn) {
+			return false;
+		}
 		for (const [k, v] of Object.entries(op.options)) {
-			if (k !== "callback" && v !== this._lastOp.options?.[k as keyof EffectOptions]) return false;
+			if (k !== "callback" && v !== this._lastOp.options?.[k as keyof EffectOptions]) {
+				return false;
+			}
 		}
 		return true;
 	}
@@ -783,7 +806,7 @@ class OriDomi {
 		this._lastOp = lastOp;
 	}
 
-	private _onTransitionEnd = (e: Event): void => {
+	private readonly _onTransitionEnd = (e: Event): void => {
 		(e.currentTarget as HTMLElement).removeEventListener(
 			TRANSITION_END,
 			this._onTransitionEnd,
@@ -792,7 +815,7 @@ class OriDomi {
 		this._conclude(this._lastOp.options?.callback, e);
 	};
 
-	private _conclude = (cb?: EffectOptions["callback"], event?: Event): void => {
+	private readonly _conclude = (cb?: EffectOptions["callback"], event?: Event): void => {
 		defer(() => {
 			this._inTrans = false;
 			this._step();
@@ -837,9 +860,15 @@ class OriDomi {
 	private _normalizeAngle(angle: number): number {
 		angle = parseFloat(String(angle));
 		const max = this._config.maxAngle;
-		if (Number.isNaN(angle)) return 0;
-		if (angle > max) return max;
-		if (angle < -max) return -max;
+		if (Number.isNaN(angle)) {
+			return 0;
+		}
+		if (angle > max) {
+			return max;
+		}
+		if (angle < -max) {
+			return -max;
+		}
 		return angle;
 	}
 
@@ -917,7 +946,7 @@ class OriDomi {
 		}
 	}
 
-	private _stageReset = (anchor: Anchor, cb: () => void): void => {
+	private readonly _stageReset = (anchor: Anchor, cb: () => void): void => {
 		const fn = (e?: Event): void => {
 			if (e) {
 				(e.currentTarget as HTMLElement).removeEventListener(TRANSITION_END, fn, false);
@@ -940,7 +969,7 @@ class OriDomi {
 		});
 	};
 
-	private _getLonghandAnchor(shorthand: unknown): Anchor {
+	_getLonghandAnchor(shorthand: unknown): Anchor {
 		return _anchorShorthands[String(shorthand)] ?? "left";
 	}
 
@@ -964,9 +993,13 @@ class OriDomi {
 
 	private _setTouch(toggle: boolean): this {
 		if (toggle) {
-			if (this._touchEnabled) return this;
+			if (this._touchEnabled) {
+				return this;
+			}
 		} else {
-			if (!this._touchEnabled) return this;
+			if (!this._touchEnabled) {
+				return this;
+			}
 		}
 
 		this._touchEnabled = toggle;
@@ -1006,14 +1039,18 @@ class OriDomi {
 	private _getEventCoord(e: MouseEvent | TouchEvent, pageKey: "pageX" | "pageY"): number | null {
 		if ("touches" in e) {
 			const touches = e.targetTouches;
-			if (!touches?.length) return null;
+			if (!touches?.length) {
+				return null;
+			}
 			return touches[0]![pageKey];
 		}
 		return e[pageKey];
 	}
 
-	private _onTouchStart = (e: MouseEvent | TouchEvent): void => {
-		if (!this._touchEnabled || this.isFoldedUp) return;
+	private readonly _onTouchStart = (e: MouseEvent | TouchEvent): void => {
+		if (!this._touchEnabled || this.isFoldedUp) {
+			return;
+		}
 		e.preventDefault();
 		this.emptyQueue();
 		this._touchStarted = true;
@@ -1030,7 +1067,9 @@ class OriDomi {
 
 		const pageKey = `page${this._touchAxis.toUpperCase()}` as "pageX" | "pageY";
 		const coord = this._getEventCoord(e, pageKey);
-		if (coord == null) return;
+		if (coord == null) {
+			return;
+		}
 
 		if (this._touchAxis === "x") {
 			this._x1 = coord;
@@ -1041,13 +1080,17 @@ class OriDomi {
 		this._config.touchStartCallback(coord, e);
 	};
 
-	private _onTouchMove = (e: MouseEvent | TouchEvent): void => {
-		if (!this._touchEnabled || !this._touchStarted) return;
+	private readonly _onTouchMove = (e: MouseEvent | TouchEvent): void => {
+		if (!this._touchEnabled || !this._touchStarted) {
+			return;
+		}
 		e.preventDefault();
 
 		const pageKey = `page${this._touchAxis.toUpperCase()}` as "pageX" | "pageY";
 		const current = this._getEventCoord(e, pageKey);
-		if (current == null) return;
+		if (current == null) {
+			return;
+		}
 
 		const startCoord = this._touchAxis === "x" ? this._x1 : this._y1;
 		const lastAngle = this._touchAxis === "x" ? this._xLast : this._yLast;
@@ -1057,10 +1100,14 @@ class OriDomi {
 		let delta: number;
 		if (this._lastOp.angle! < 0) {
 			delta = reversed ? lastAngle - distance : lastAngle + distance;
-			if (delta > 0) delta = 0;
+			if (delta > 0) {
+				delta = 0;
+			}
 		} else {
 			delta = reversed ? lastAngle + distance : lastAngle - distance;
-			if (delta < 0) delta = 0;
+			if (delta < 0) {
+				delta = 0;
+			}
 		}
 
 		this._lastOp.angle = delta = this._normalizeAngle(delta);
@@ -1068,8 +1115,10 @@ class OriDomi {
 		this._config.touchMoveCallback(delta, e);
 	};
 
-	private _onTouchEnd = (e: Event): void => {
-		if (!this._touchEnabled) return;
+	private readonly _onTouchEnd = (e: Event): void => {
+		if (!this._touchEnabled) {
+			return;
+		}
 		this._touchStarted = this._inTrans = false;
 		this.el.style.cursor = CURSOR_GRAB;
 		this._setTrans(this._config.speed, this._config.ripple as number);
@@ -1077,13 +1126,17 @@ class OriDomi {
 		this._config.touchEndCallback(lastCoord, e);
 	};
 
-	private _onTouchCancel = (e: Event): void => {
-		if (!this._touchEnabled || !this._touchStarted) return;
+	private readonly _onTouchCancel = (e: Event): void => {
+		if (!this._touchEnabled || !this._touchStarted) {
+			return;
+		}
 		this._onTouchEnd(e);
 	};
 
-	private _onMouseOut = (e: MouseEvent): void => {
-		if (!this._touchEnabled || !this._touchStarted) return;
+	private readonly _onMouseOut = (e: MouseEvent): void => {
+		if (!this._touchEnabled || !this._touchStarted) {
+			return;
+		}
 		const related = e.relatedTarget as Node | null;
 		if (related && !this.el.contains(related)) {
 			this._onTouchEnd(e);
@@ -1261,7 +1314,9 @@ class OriDomi {
 				content?: string | null,
 				style?: Record<string, string> | null,
 			): void => {
-				if (content) el.innerHTML = content;
+				if (content) {
+					el.innerHTML = content;
+				}
 				if (style) {
 					for (const [key, value] of Object.entries(style)) {
 						setStyleProp(el.style, key, value);
@@ -1335,10 +1390,14 @@ class OriDomi {
 					deg *= 2;
 				}
 			} else {
-				if (i !== 0) deg *= 2;
+				if (i !== 0) {
+					deg *= 2;
+				}
 			}
 
-			if (options.stairs) deg *= -1;
+			if (options.stairs) {
+				deg *= -1;
+			}
 
 			this._transformPanel(panel, deg, anchor, options.fracture);
 
@@ -1364,11 +1423,15 @@ class OriDomi {
 
 	private _rampImpl(angle: number, anchor: Anchor, _options: EffectOptions): void {
 		const panels = this._panels[anchor];
-		if (panels.length < 2) return;
+		if (panels.length < 2) {
+			return;
+		}
 		this._transformPanel(panels[1]!, angle, anchor);
 
 		this._iterate(anchor, (panel, i) => {
-			if (i !== 1) this._transformPanel(panel, 0, anchor);
+			if (i !== 1) {
+				this._transformPanel(panel, 0, anchor);
+			}
 			if (this._shading) {
 				this._setShader(i, anchor, 0);
 			}
@@ -1386,7 +1449,9 @@ class OriDomi {
 
 			this._iterate(anchor, (panel, i, len) => {
 				let duration = this._config.speed;
-				if (i === 0) duration /= 2;
+				if (i === 0) {
+					duration /= 2;
+				}
 				const delay = this._setPanelTrans(anchor, panel, i, len, duration, DELAY_REVERSE);
 
 				const deferTimer = this._trackedTimeout(() => {

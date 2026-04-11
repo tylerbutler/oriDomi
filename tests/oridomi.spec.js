@@ -49,7 +49,9 @@ function applyEffect(page, method, ...args) {
 async function assertTransformApplied(page) {
 	const maxAngle = await page.evaluate(() => {
 		const el = document.querySelector("#target");
-		if (!el) return 0;
+		if (!el) {
+			return 0;
+		}
 		// Walk ALL descendants — panels are nested
 		const allEls = el.querySelectorAll("*");
 		let max = 0;

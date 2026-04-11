@@ -1272,7 +1272,9 @@ describe("OriDomi", () => {
 				const shader = panel.querySelector('[class*="shader"]') as HTMLElement;
 				if (shader) {
 					const op = parseFloat(shader.style.opacity);
-					if (!Number.isNaN(op)) opacities.push(op);
+					if (!Number.isNaN(op)) {
+						opacities.push(op);
+					}
 				}
 			}
 			// With accordion at 45°, we expect at least one non-zero opacity
