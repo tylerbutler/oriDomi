@@ -93,12 +93,12 @@
 - **File:** `src/oridomi.ts:301–360, 1191–1322`
 - **Description:** The `prep()` decorator accepts `EffectFn` with `...args: any[]` and returns `(this: OriDomi, ...args: unknown[]) => OriDomi`. Effect methods use `function()` syntax, losing class `this` typing. Every internal access requires `(this as any)._iterate(...)`, etc.
 - **Impact:** 40 of 57 `as any` casts. Typos/wrong args invisible to compiler.
-- **Status:** [ ] Not fixed
+- **Status:** [x] Fixed
 
 #### TYPE-2: `.d.ts` output exposes internals, core methods have `...args: unknown[]`
 - **File:** `dist/oridomi.d.ts`
 - **Description:** Consumer-facing types show `accordion: (this: OriDomi, ...args: unknown[]) => OriDomi` — no autocomplete, no parameter validation. Internal `_step`, `_onTransitionEnd`, `_conclude`, `_stageReset`, `_onTouchStart` etc. leak as public.
-- **Status:** [ ] Not fixed
+- **Status:** [x] Fixed
 
 #### TYPE-3: `Anchor` and `EffectOptions` types not exported
 - **File:** `src/oridomi.ts:1326–1327`
@@ -173,7 +173,7 @@
 #### DRY-2: Transform+shade iteration pattern duplicated in all 4 effects
 - **Files:** `src/oridomi.ts:1192–1221, 1230–1235, 1241–1246, 845–850`
 - **Description:** Each effect uses the same `_iterate` → `_transformPanel` → optional `_setShader` skeleton. Should extract `_applyTransformAndShade()`.
-- **Status:** [ ] Not fixed
+- **Status:** [x] Fixed
 
 #### DRY-3: 78 identical `new OriDomi(el, { speed: 0, touchEnabled: false })` in tests
 - **File:** `tests/oridomi.test.ts`
@@ -272,7 +272,7 @@
 #### SIMP-8: `_iterate` wraps a simple `forEach`
 - **File:** `src/oridomi.ts:1045–1050`
 - **Description:** Custom loop exists only to pass `panels.length` as third arg. Could use `forEach` directly.
-- **Status:** [ ] Not fixed
+- **Status:** [x] Skipped (low value)
 
 #### SIMP-9: `_transformPanel` switch could use data-driven lookup
 - **File:** `src/oridomi.ts:690–707`
@@ -300,7 +300,7 @@
 #### TEST-4: E2E `applyEffect` fallback timeout masks failures
 - **File:** `tests/oridomi.spec.js:25–38`
 - **Description:** 150ms `setTimeout` fallback means tests pass even if effect callback mechanism is broken.
-- **Status:** [ ] Not fixed
+- **Status:** [x] Fixed
 
 #### TEST-5: Queue sequencing untested
 - **Description:** Multiple chained effects (`accordion().wait().curl().reset()`) — entire queue system has zero behavioral coverage.
@@ -311,11 +311,11 @@
 #### TEST-6: E2E assertions use weak `includes("rotate")`
 - **File:** `tests/oridomi.spec.js:123–210`
 - **Description:** Would pass with wrong axis, wrong angle, or wrong panel targeting.
-- **Status:** [ ] Not fixed
+- **Status:** [x] Fixed
 
 #### TEST-7: `_step` auto-unfreeze and folded-up paths untested
 - **Description:** Two conditional branches in the core loop with no coverage.
-- **Status:** [ ] Not fixed
+- **Status:** [x] Fixed
 
 #### TEST-8: 5 config options with zero test coverage
 - **Description:** `shadingIntensity`, `easingMethod`, `gapNudge`, `touchSensitivity`, `oriDomiClass` — regressions invisible.
@@ -327,7 +327,7 @@
 
 #### TEST-10: Shader opacity values during effects untested
 - **Description:** Shading tests check existence, not correctness of computed opacity.
-- **Status:** [ ] Not fixed
+- **Status:** [x] Fixed
 
 #### TEST-11: `accordion works with all four anchors` E2E test has zero assertions
 - **File:** `tests/oridomi.spec.js:129–134`

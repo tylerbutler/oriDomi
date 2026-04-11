@@ -15,7 +15,7 @@ const defer = (fn: () => void): number => setTimeout(fn, 0);
 
 const noOp = (): void => {};
 
-const capitalize = (s: string): string => s[0].toUpperCase() + s.slice(1);
+const capitalize = (s: string): string => s[0]!.toUpperCase() + s.slice(1);
 
 /** Type-safe dynamic CSS property setter for CSSStyleDeclaration. */
 function setStyleProp(style: CSSStyleDeclaration, prop: string, value: string): void {
@@ -485,7 +485,7 @@ class OriDomi {
     this._queue = [];
     this._panels = { left: [], right: [], top: [], bottom: [] };
     this._stages = {} as Record<Anchor, HTMLDivElement>;
-    this._lastOp = { anchor: anchorList[0] };
+    this._lastOp = { anchor: anchorList[0]! };
     this._shading = resolvedShading;
 
     let shaderProtos: Record<string, HTMLDivElement> = {};
@@ -573,7 +573,7 @@ class OriDomi {
       const mask = cloneEl(maskProto, true, maskClassKey);
       if (this._shading) {
         for (const a of anchorSet) {
-          mask.appendChild(shaderProtos[a]);
+          mask.appendChild(shaderProtos[a]!);
         }
       }
 
@@ -597,47 +597,47 @@ class OriDomi {
             index = panelN;
             prev = index - 1;
             if (panelN === 0) {
-              offsets[anchor].push(0);
+              offsets[anchor!]!.push(0);
             } else {
-              offsets[anchor].push(
-                (offsets[anchor][prev] - 100) * (panelConfigArr[prev] / panelConfigArr[index])
+              offsets[anchor!]!.push(
+                (offsets[anchor!]![prev]! - 100) * (panelConfigArr[prev]! / panelConfigArr[index]!)
               );
             }
           }
 
           if (panelN === 0) {
-            setStyleProp(panel.style, anchor, '0');
-            setStyleProp(panel.style, metric, panelConfigArr[index] + '%');
+            setStyleProp(panel.style, anchor!, '0');
+            setStyleProp(panel.style, metric, panelConfigArr[index]! + '%');
           } else {
-            setStyleProp(panel.style, anchor, '100%');
+            setStyleProp(panel.style, anchor!, '100%');
             setStyleProp(panel.style, metric,
-              (panelConfigArr[index] / panelConfigArr[prev] * 100) + '%');
+              (panelConfigArr[index]! / panelConfigArr[prev]! * 100) + '%');
           }
 
           if (this._shading) {
             for (let ai = 0; ai < anchorSet.length; ai++) {
               const a = anchorSet[ai];
-              this._shaders[anchor][a][panelN] = (panel.children[0] as HTMLElement).children[
+              this._shaders[anchor!][a!][panelN] = (panel.children[0] as HTMLElement).children[
                 ai + 1
               ] as HTMLDivElement;
             }
           }
 
-          const sizePercent = (count / panelConfigArr[index] * 10000 / count) + '%';
+          const sizePercent = (count / panelConfigArr[index]! * 10000 / count) + '%';
           content.style[metric] = sizePercent;
           setStyleProp(content.style, 'max' + capitalize(metric), sizePercent);
 
-          setStyleProp(content.style, anchorSet[0], offsets[anchorSet[0]][index] + '%');
+          setStyleProp(content.style, anchorSet[0]!, offsets[anchorSet[0]!]![index]! + '%');
 
-          this._transformPanel(panel, 0, anchor);
-          this._panels[anchor][panelN] = panel;
+          this._transformPanel(panel, 0, anchor!);
+          this._panels[anchor!][panelN] = panel;
 
           if (panelN !== 0) {
-            this._panels[anchor][panelN - 1].appendChild(panel);
+            this._panels[anchor!][panelN - 1]!.appendChild(panel);
           }
         }
 
-        this._stages[anchor].appendChild(this._panels[anchor][0]);
+        this._stages[anchor!].appendChild(this._panels[anchor!][0]!);
       }
     }
 
@@ -729,7 +729,7 @@ class OriDomi {
     if (!this._config.speed || this._isIdenticalOperation(lastOp as LastOperation & { options: EffectOptions })) {
       this._conclude(operation.options.callback);
     } else {
-      this._panels[this._lastOp.anchor][0].addEventListener(
+      this._panels[this._lastOp.anchor][0]!.addEventListener(
         TRANSITION_END,
         this._onTransitionEnd,
         false
@@ -830,7 +830,7 @@ class OriDomi {
     if (this._shading) {
       const sides = isVerticalAnchor(anchor) ? anchorListV : anchorListH;
       for (const side of sides) {
-        const shader = this._shaders[anchor][side][i];
+        const shader = this._shaders[anchor][side][i]!;
         shader.style.transitionDuration = duration + 'ms';
         shader.style.transitionDelay = delayMs + 'ms';
       }
@@ -853,8 +853,8 @@ class OriDomi {
     const isVert = isVerticalAnchor(anchor);
     const [sideA, sideB]: [Anchor, Anchor] = isVert ? ['left', 'right'] : ['top', 'bottom'];
     const negative = isVert ? (angle < 0) : (angle >= 0);
-    this._shaders[anchor][sideA][n].style.opacity = String(negative ? opacity : 0);
-    this._shaders[anchor][sideB][n].style.opacity = String(negative ? 0 : opacity);
+    this._shaders[anchor][sideA][n]!.style.opacity = String(negative ? opacity : 0);
+    this._shaders[anchor][sideB][n]!.style.opacity = String(negative ? 0 : opacity);
   }
 
   private _showStage(anchor: Anchor): void {
@@ -883,7 +883,7 @@ class OriDomi {
       return;
     }
 
-    this._panels[this._lastOp.anchor][0].addEventListener(TRANSITION_END, fn, false);
+    this._panels[this._lastOp.anchor][0]!.addEventListener(TRANSITION_END, fn, false);
     this._iterate(this._lastOp.anchor, (panel, i) => {
       this._transformPanel(panel, 0, this._lastOp.anchor);
       if (this._shading) {
@@ -949,7 +949,7 @@ class OriDomi {
         } else {
           this.el[listenFn](
             eString.toLowerCase(),
-            this._touchHandlers[eventPair[0]],
+            this._touchHandlers[eventPair[0]!]!,
             false
           );
         }
@@ -963,7 +963,7 @@ class OriDomi {
     if ('touches' in e) {
       const touches = e.targetTouches;
       if (!touches?.length) return null;
-      return touches[0][pageKey];
+      return touches[0]![pageKey];
     }
     return e[pageKey];
   }
@@ -1095,7 +1095,7 @@ class OriDomi {
   private _iterate(anchor: Anchor, fn: PanelIteratorFn): void {
     const panels = this._panels[anchor];
     for (let i = 0; i < panels.length; i++) {
-      fn.call(this, panels[i], i, panels.length);
+      fn.call(this, panels[i]!, i, panels.length);
     }
   }
 
@@ -1242,7 +1242,7 @@ class OriDomi {
     for (const anchor of anchorList) {
       for (let i = 0; i < this._panels[anchor].length; i++) {
         const panel = this._panels[anchor][i];
-        iteratorFn((panel.children[0] as HTMLElement).children[0] as HTMLElement, i, anchor);
+        iteratorFn((panel!.children[0] as HTMLElement).children[0] as HTMLElement, i, anchor);
       }
     }
     return this;
@@ -1310,7 +1310,7 @@ class OriDomi {
   private _rampImpl(angle: number, anchor: Anchor, _options: EffectOptions): void {
     const panels = this._panels[anchor];
     if (panels.length < 2) return;
-    this._transformPanel(panels[1], angle, anchor);
+    this._transformPanel(panels[1]!, angle, anchor);
 
     this._iterate(anchor, (panel, i) => {
       if (i !== 1) this._transformPanel(panel, 0, anchor);

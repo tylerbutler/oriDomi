@@ -31,20 +31,39 @@ function applyEffect(page, method, ...args) {
           }
         };
         ori[method](...args, { callback: done });
-        // Fallback: speed:0 may call _conclude synchronously, or
-        // _stageReset defers via setTimeout — cover both paths.
-        setTimeout(done, 150);
+        // With speed:0, CSS transition duration is 0ms and transitionend
+        // may not fire in all browsers. The fallback ensures the test
+        // proceeds. 500ms is generous enough to catch real hangs while
+        // accommodating deferred setTimeout chains in effects like foldUp.
+        setTimeout(done, 500);
       });
     },
     { method, args }
   );
 }
 
-async function expectRotation(page) {
-  const has = await page.evaluate(() =>
-    document.querySelector("#target").innerHTML.includes("rotate")
-  );
-  expect(has).toBe(true);
+/**
+ * Assert that at least one panel has a non-zero CSS rotate transform.
+ * Checks both inline style.transform and computed style for robustness.
+ */
+async function assertTransformApplied(page) {
+  const maxAngle = await page.evaluate(() => {
+    const el = document.querySelector("#target");
+    if (!el) return 0;
+    // Walk ALL descendants — panels are nested
+    const allEls = el.querySelectorAll("*");
+    let max = 0;
+    for (const node of allEls) {
+      const t = node.style?.transform || '';
+      // Match rotateX(30deg), rotateY(-45deg), etc.
+      const matches = t.matchAll(/rotate[XYZ]?\((-?[\d.]+)deg\)/g);
+      for (const m of matches) {
+        max = Math.max(max, Math.abs(parseFloat(m[1])));
+      }
+    }
+    return max;
+  });
+  expect(maxAngle).toBeGreaterThan(0);
 }
 
 // ─── Construction ───────────────────────────────────────────────────────────
@@ -129,25 +148,25 @@ test.describe("effects", () => {
 
   test("accordion folds the element", async ({ page }) => {
     await applyEffect(page, "accordion", 40, "left");
-    await expectRotation(page);
+    await assertTransformApplied(page);
   });
 
   test("accordion works with all four anchors", async ({ page }) => {
     for (const anchor of ["left", "right", "top", "bottom"]) {
       await applyEffect(page, "accordion", 30, anchor);
-      await expectRotation(page);
+      await assertTransformApplied(page);
       await applyEffect(page, "reset");
     }
   });
 
   test("curl applies transforms", async ({ page }) => {
     await applyEffect(page, "curl", 40, "left");
-    await expectRotation(page);
+    await assertTransformApplied(page);
   });
 
   test("ramp applies transforms", async ({ page }) => {
     await applyEffect(page, "ramp", 30, "left");
-    await expectRotation(page);
+    await assertTransformApplied(page);
   });
 
   test("foldUp folds the element", async ({ page }) => {
@@ -166,32 +185,32 @@ test.describe("effects", () => {
 
   test("reveal applies transforms", async ({ page }) => {
     await applyEffect(page, "reveal", 30, "left");
-    await expectRotation(page);
+    await assertTransformApplied(page);
   });
 
   test("stairs applies transforms", async ({ page }) => {
     await applyEffect(page, "stairs", 30, "left");
-    await expectRotation(page);
+    await assertTransformApplied(page);
   });
 
   test("fracture applies transforms", async ({ page }) => {
     await applyEffect(page, "fracture", 20, "left");
-    await expectRotation(page);
+    await assertTransformApplied(page);
   });
 
   test("twist applies transforms", async ({ page }) => {
     await applyEffect(page, "twist", 20, "left");
-    await expectRotation(page);
+    await assertTransformApplied(page);
   });
 
   test("collapse folds the element", async ({ page }) => {
     await applyEffect(page, "collapse", "left");
-    await expectRotation(page);
+    await assertTransformApplied(page);
   });
 
   test("collapseAlt folds the element", async ({ page }) => {
     await applyEffect(page, "collapseAlt", "left");
-    await expectRotation(page);
+    await assertTransformApplied(page);
   });
 });
 

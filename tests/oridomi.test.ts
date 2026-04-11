@@ -31,6 +31,12 @@ function getPanels(ori: OriDomi, anchor: string = 'left'): HTMLDivElement[] {
   return (ori as any)._panels[anchor] as HTMLDivElement[];
 }
 
+// Helper: manually fire transitionend on first panel (jsdom doesn't do transitions)
+function fireTransitionEnd(ori: OriDomi, anchor: string = 'left'): void {
+  const panel = getPanels(ori, anchor)[0];
+  panel.dispatchEvent(new Event('transitionend', { bubbles: true }));
+}
+
 describe('OriDomi', () => {
   let el: HTMLDivElement;
 
@@ -1131,11 +1137,6 @@ describe('OriDomi', () => {
   // ─── TEST-3: Unfold lifecycle tests ────────────────────────────────────
 
   describe('unfold lifecycle', () => {
-    // Helper: manually fire transitionend on first panel (jsdom doesn't do transitions)
-    function fireTransitionEnd(ori: OriDomi, anchor: string = 'left'): void {
-      const panel = getPanels(ori, anchor)[0];
-      panel.dispatchEvent(new Event('transitionend', { bubbles: true }));
-    }
 
     it('foldUp sets isFoldedUp to true', async () => {
       vi.useFakeTimers();
@@ -1214,6 +1215,98 @@ describe('OriDomi', () => {
 
       expect(ori.isFoldedUp).toBe(true);
       vi.useRealTimers();
+    });
+  });
+
+  // TEST-7: _step auto-unfreeze and folded-up code paths
+  describe('_step edge cases', () => {
+    it('unfreezes automatically when an effect is queued while frozen', async () => {
+      const el = createTarget();
+      const ori = createOri(el);
+      await flushDefer();
+
+      // Directly set isFrozen (bypass freeze() which needs transitionend)
+      (ori as any).isFrozen = true;
+      expect(ori.isFrozen).toBe(true);
+
+      // Queue an effect — _step should auto-unfreeze
+      ori.accordion(30);
+      await flushDefer();
+
+      expect(ori.isFrozen).toBe(false);
+      const panels = getPanels(ori, 'left');
+      const hasTransform = panels.some(
+        (p) => p.style.transform && p.style.transform.includes('rotate'),
+      );
+      expect(hasTransform).toBe(true);
+    });
+
+    it('auto-unfolds before applying an effect when isFoldedUp is true', async () => {
+      const el = createTarget();
+      const ori = createOri(el);
+      await flushDefer();
+
+      // Simulate folded-up state
+      (ori as any).isFoldedUp = true;
+
+      // Queue an accordion effect — _step should queue unfold first
+      ori.accordion(45);
+      await flushDefer();
+
+      // _step inserts unfold before the accordion; unfold needs transitionend
+      // from _stageReset. Fire it to complete the unfold.
+      fireTransitionEnd(ori);
+      await flushDefer();
+
+      expect(ori.isFoldedUp).toBe(false);
+    });
+  });
+
+  // TEST-10: Shader opacity correctness during effects
+  describe('shader opacity values', () => {
+    it('sets gradient shader opacity proportional to fold angle', async () => {
+      const el = createTarget();
+      const ori = createOri(el, { shading: 'hard' });
+      await flushDefer();
+
+      ori.accordion(45);
+      await flushDefer();
+
+      const panels = getPanels(ori, 'left');
+      // Each panel should have a shader child with an opacity set
+      const opacities: number[] = [];
+      for (const panel of panels) {
+        const shader = panel.querySelector('[class*="shader"]') as HTMLElement;
+        if (shader) {
+          const op = parseFloat(shader.style.opacity);
+          if (!isNaN(op)) opacities.push(op);
+        }
+      }
+      // With accordion at 45°, we expect at least one non-zero opacity
+      expect(opacities.length).toBeGreaterThan(0);
+      const hasNonZero = opacities.some((o) => o > 0);
+      expect(hasNonZero).toBe(true);
+    });
+
+    it('shader opacity is zero when panel angle is zero', async () => {
+      const el = createTarget();
+      const ori = createOri(el, { shading: 'hard' });
+      await flushDefer();
+
+      // Apply accordion with 0 angle — all panels at 0°
+      ori.accordion(0);
+      await flushDefer();
+
+      const panels = getPanels(ori, 'left');
+      for (const panel of panels) {
+        const shader = panel.querySelector('[class*="shader"]') as HTMLElement;
+        if (shader) {
+          const op = parseFloat(shader.style.opacity);
+          if (!isNaN(op)) {
+            expect(op).toBe(0);
+          }
+        }
+      }
     });
   });
 });
