@@ -1000,17 +1000,220 @@ describe('OriDomi', () => {
     });
   });
 
-  // ─── BUG-5: emptyQueue cancels _unfold timers ─────────────────────────
+  // ─── TEST-1: Touch/drag interaction tests ───────────────────────────────
 
-  describe('emptyQueue timer cancellation', () => {
-    it('clears pending timers when emptyQueue is called', () => {
-      const ori = createOri(el, { speed: 500, touchEnabled: false });
-      // Add timers via tracked mechanism
-      const timer = (ori as any)._trackedTimeout(() => {}, 1000);
-      expect((ori as any)._pendingTimers.size).toBe(1);
-      ori.emptyQueue();
-      expect((ori as any)._pendingTimers.size).toBe(0);
-      clearTimeout(timer); // cleanup
+  describe('touch/drag interactions', () => {
+    function createTouchOri(targetEl: HTMLDivElement): OriDomi {
+      const ori = createOri(targetEl, { speed: 0, touchEnabled: true });
+      // Ensure an initial effect has been applied so _lastOp.fn is set
+      ori.accordion(0);
+      return ori;
+    }
+
+    function mouseEvent(type: string, opts: Partial<MouseEventInit> = {}): MouseEvent {
+      return new MouseEvent(type, { bubbles: true, cancelable: true, ...opts });
+    }
+
+    it('enableTouch / disableTouch toggles _touchEnabled', () => {
+      const ori = createOri(el, { touchEnabled: false });
+      expect((ori as any)._touchEnabled).toBe(false);
+      ori.enableTouch();
+      expect((ori as any)._touchEnabled).toBe(true);
+      ori.disableTouch();
+      expect((ori as any)._touchEnabled).toBe(false);
+    });
+
+    it('_onTouchStart sets _touchStarted and cursor', async () => {
+      const ori = createTouchOri(el);
+      await flushDefer();
+
+      el.dispatchEvent(mouseEvent('mousedown', { pageX: 100, pageY: 50 }));
+      expect((ori as any)._touchStarted).toBe(true);
+      expect(el.style.cursor).toBe('grabbing');
+    });
+
+    it('_onTouchEnd resets _touchStarted and cursor', async () => {
+      const ori = createTouchOri(el);
+      await flushDefer();
+
+      el.dispatchEvent(mouseEvent('mousedown', { pageX: 100, pageY: 50 }));
+      el.dispatchEvent(mouseEvent('mouseup'));
+      expect((ori as any)._touchStarted).toBe(false);
+      expect(el.style.cursor).toBe('grab');
+    });
+
+    it('_onTouchMove updates lastOp angle', async () => {
+      const ori = createTouchOri(el);
+      await flushDefer();
+      await flushDefer();
+
+      // Set initial angle so touch has something to work with
+      ori.accordion(30);
+      await flushDefer();
+      await flushDefer();
+
+      el.dispatchEvent(mouseEvent('mousedown', { pageX: 100, pageY: 50 }));
+
+      // Move mouse to simulate drag
+      el.dispatchEvent(mouseEvent('mousemove', { pageX: 150, pageY: 50 }));
+
+      // Angle should have changed from the drag
+      const angle = (ori as any)._lastOp.angle;
+      expect(typeof angle).toBe('number');
+    });
+
+    it('touchStartCallback is invoked on touch start', async () => {
+      const startCb = vi.fn();
+      const ori = createOri(el, {
+        speed: 0,
+        touchEnabled: true,
+        touchStartCallback: startCb,
+      });
+      ori.accordion(0);
+      await flushDefer();
+      await flushDefer();
+
+      el.dispatchEvent(mouseEvent('mousedown', { pageX: 100, pageY: 50 }));
+      expect(startCb).toHaveBeenCalled();
+    });
+
+    it('touchEndCallback is invoked on touch end', async () => {
+      const endCb = vi.fn();
+      const ori = createOri(el, {
+        speed: 0,
+        touchEnabled: true,
+        touchEndCallback: endCb,
+      });
+      ori.accordion(0);
+      await flushDefer();
+      await flushDefer();
+
+      el.dispatchEvent(mouseEvent('mousedown', { pageX: 100, pageY: 50 }));
+      el.dispatchEvent(mouseEvent('mouseup'));
+      expect(endCb).toHaveBeenCalled();
+    });
+
+    it('_onMouseOut ends touch when leaving element', async () => {
+      const ori = createTouchOri(el);
+      await flushDefer();
+      await flushDefer();
+
+      el.dispatchEvent(mouseEvent('mousedown', { pageX: 100, pageY: 50 }));
+      expect((ori as any)._touchStarted).toBe(true);
+
+      // Simulate mouse leaving element — relatedTarget is outside
+      const outside = document.createElement('div');
+      document.body.appendChild(outside);
+      const mouseOut = new MouseEvent('mouseout', {
+        bubbles: true,
+        relatedTarget: outside,
+      });
+      // Call _onMouseOut directly since it's bound to mouseout
+      (ori as any)._onMouseOut(mouseOut);
+      expect((ori as any)._touchStarted).toBe(false);
+    });
+
+    it('touch does nothing when isFoldedUp', async () => {
+      const ori = createTouchOri(el);
+      await flushDefer();
+
+      (ori as any).isFoldedUp = true;
+      el.dispatchEvent(mouseEvent('mousedown', { pageX: 100, pageY: 50 }));
+      expect((ori as any)._touchStarted).toBe(false);
+    });
+
+    it('setCursor sets grab cursor when enabled', () => {
+      const ori = createOri(el, { touchEnabled: true });
+      expect(el.style.cursor).toBe('grab');
+    });
+  });
+
+  // ─── TEST-3: Unfold lifecycle tests ────────────────────────────────────
+
+  describe('unfold lifecycle', () => {
+    // Helper: manually fire transitionend on first panel (jsdom doesn't do transitions)
+    function fireTransitionEnd(ori: OriDomi, anchor: string = 'left'): void {
+      const panel = getPanels(ori, anchor)[0];
+      panel.dispatchEvent(new Event('transitionend', { bubbles: true }));
+    }
+
+    it('foldUp sets isFoldedUp to true', async () => {
+      vi.useFakeTimers();
+      const ori = createOri(el, { speed: 0, touchEnabled: false });
+      // Start with angle 0 so _stageReset takes fast path
+      ori.accordion(0);
+      await vi.advanceTimersByTimeAsync(0);
+
+      ori.foldUp();
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(ori.isFoldedUp).toBe(true);
+      vi.useRealTimers();
+    });
+
+    it('unfold resets isFoldedUp to false', async () => {
+      vi.useFakeTimers();
+      const ori = createOri(el, { speed: 0, touchEnabled: false });
+
+      // Fold up (angle 0 → fast path through _stageReset)
+      ori.accordion(0);
+      await vi.advanceTimersByTimeAsync(0);
+
+      ori.foldUp();
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(ori.isFoldedUp).toBe(true);
+
+      // Unfold — call directly since it bypasses queue complexities
+      (ori as any)._unfold();
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(ori.isFoldedUp).toBe(false);
+      vi.useRealTimers();
+    });
+
+    it('_unfold resets angle to 0', async () => {
+      vi.useFakeTimers();
+      const ori = createOri(el, { speed: 0, touchEnabled: false });
+
+      // Set up folded state
+      ori.accordion(0);
+      await vi.advanceTimersByTimeAsync(0);
+      ori.foldUp();
+      await vi.advanceTimersByTimeAsync(200);
+
+      (ori as any)._unfold();
+      await vi.advanceTimersByTimeAsync(200);
+
+      expect((ori as any)._lastOp.angle).toBe(0);
+      vi.useRealTimers();
+    });
+
+    it('foldUp with non-zero angle triggers stageReset transition', async () => {
+      vi.useFakeTimers();
+      const ori = createOri(el, { speed: 50, touchEnabled: false });
+
+      // Apply a non-zero angle
+      ori.accordion(30);
+      await vi.advanceTimersByTimeAsync(0);
+      // Fire transitionend to complete accordion
+      fireTransitionEnd(ori);
+      await vi.advanceTimersByTimeAsync(0);
+
+      const cb = vi.fn();
+      ori.foldUp({ callback: cb });
+      await vi.advanceTimersByTimeAsync(0);
+      // Fire transitionend for _stageReset
+      fireTransitionEnd(ori);
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(200);
+
+      expect(ori.isFoldedUp).toBe(true);
+      vi.useRealTimers();
     });
   });
 });

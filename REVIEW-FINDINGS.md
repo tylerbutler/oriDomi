@@ -287,7 +287,7 @@
 
 #### TEST-1: Zero touch/drag interaction tests
 - **Description:** `_onTouchStart`, `_onTouchMove`, `_onTouchEnd`, `_onTouchLeave`, `_onMouseOut` (~80 lines) have zero behavioral coverage.
-- **Status:** [ ] Not fixed
+- **Status:** [x] Fixed
 
 #### TEST-2: Effect callbacks never tested
 - **Description:** `prep` decorator's callback extraction from various argument positions is untested. No test verifies `accordion(30, 'left', { callback: fn })` actually invokes `fn`.
@@ -295,7 +295,7 @@
 
 #### TEST-3: `unfold()` and foldUp↔unfold lifecycle untested
 - **Description:** `_unfold` has complex nested timers. No behavioral test for the fold lifecycle.
-- **Status:** [ ] Not fixed
+- **Status:** [x] Fixed
 
 #### TEST-4: E2E `applyEffect` fallback timeout masks failures
 - **File:** `tests/oridomi.spec.js:25–38`

@@ -1283,7 +1283,8 @@ class OriDomi {
     });
   });
 
-  foldUp = prep(function (this: OriDomi, anchor: Anchor, callback?: EffectOptions['callback']): void {
+  foldUp = prep(function (this: OriDomi, anchor: Anchor, options: EffectOptions): void {
+    const callback = options?.callback;
     if ((this as any).isFoldedUp) {
       callback?.();
       return;
