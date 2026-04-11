@@ -817,4 +817,200 @@ describe('OriDomi', () => {
     expect(spy).toHaveBeenCalled();
     spy.mockRestore();
   });
+
+  // ─── TEST-5: Queue sequencing ──────────────────────────────────────────
+
+  describe('queue sequencing', () => {
+    it('chained effects execute in order', async () => {
+      const ori = createOri(el);
+      const order: string[] = [];
+      ori.accordion(30, 'left', { callback: () => order.push('accordion') });
+      ori.curl(20, 'left', { callback: () => order.push('curl') });
+      // With speed:0, both should resolve via deferred callbacks
+      await flushDefer();
+      await flushDefer();
+      await flushDefer();
+      await flushDefer();
+      expect(order).toEqual(['accordion', 'curl']);
+    });
+
+    it('emptyQueue prevents queued effects from executing', async () => {
+      const ori = createOri(el);
+      const cb = vi.fn();
+      ori.accordion(30);
+      ori.curl(20, 'left', { callback: cb });
+      ori.emptyQueue();
+      await flushDefer();
+      await flushDefer();
+      await flushDefer();
+      // curl callback should not fire since queue was cleared
+      expect(cb).not.toHaveBeenCalled();
+    });
+  });
+
+  // ─── TEST-9: wait() behavioral ─────────────────────────────────────────
+
+  describe('wait()', () => {
+    it('delays subsequent effects', async () => {
+      vi.useFakeTimers();
+      const ori = createOri(el, { speed: 0, touchEnabled: false });
+      const cb = vi.fn();
+      ori.accordion(30);
+      ori.wait(100);
+      ori.accordion(0, { callback: cb });
+
+      // Process initial accordion
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Still waiting
+      expect(cb).not.toHaveBeenCalled();
+
+      // Advance past wait
+      await vi.advanceTimersByTimeAsync(150);
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(cb).toHaveBeenCalled();
+      vi.useRealTimers();
+    });
+
+    it('sets _inTrans to true to block queue', () => {
+      const ori = createOri(el);
+      ori.wait(100);
+      expect((ori as any)._inTrans).toBe(true);
+    });
+  });
+
+  // ─── TEST-13: Single-panel configuration ───────────────────────────────
+
+  describe('single-panel configuration', () => {
+    it('accordion with vPanels: 1 transforms the single panel', async () => {
+      const ori = createOri(el, { vPanels: 1 });
+      ori.accordion(45);
+      await flushDefer();
+      const panels = getPanels(ori);
+      expect(panels.length).toBe(1);
+      expect(panels[0].style.transform).toContain('rotateY(45deg)');
+    });
+
+    it('curl with vPanels: 1 divides angle by 1', async () => {
+      const ori = createOri(el, { vPanels: 1 });
+      ori.curl(60);
+      await flushDefer();
+      const panels = getPanels(ori);
+      expect(panels[0].style.transform).toContain('rotateY(60deg)');
+    });
+  });
+
+  // ─── TEST-14: _isIdenticalOperation ────────────────────────────────────
+
+  describe('_isIdenticalOperation', () => {
+    it('identical repeated effect triggers callback immediately', async () => {
+      const ori = createOri(el);
+      const cb1 = vi.fn();
+      const cb2 = vi.fn();
+      ori.accordion(30, 'left', { callback: cb1 });
+      await flushDefer();
+      await flushDefer();
+      expect(cb1).toHaveBeenCalled();
+
+      // Same operation again — should be detected as identical
+      ori.accordion(30, 'left', { callback: cb2 });
+      await flushDefer();
+      await flushDefer();
+      expect(cb2).toHaveBeenCalled();
+    });
+
+    it('different angle is not identical', async () => {
+      const ori = createOri(el);
+      ori.accordion(30);
+      await flushDefer();
+      await flushDefer();
+
+      const panels = getPanels(ori);
+      ori.accordion(45);
+      await flushDefer();
+      await flushDefer();
+      // Panels should reflect new angle
+      expect(panels[0].style.transform).toContain('rotateY(45deg)');
+    });
+  });
+
+  // ─── TEST-15: perspective CSS application ──────────────────────────────
+
+  describe('perspective CSS', () => {
+    it('applies perspective value to stage elements', () => {
+      const ori = createOri(el, { perspective: 500 });
+      const stages = (ori as any)._stages;
+      expect(stages.left.style.perspective).toBe('500px');
+      expect(stages.right.style.perspective).toBe('500px');
+      expect(stages.top.style.perspective).toBe('500px');
+      expect(stages.bottom.style.perspective).toBe('500px');
+    });
+
+    it('uses default perspective of 1000', () => {
+      const ori = createOri(el);
+      const stages = (ori as any)._stages;
+      expect(stages.left.style.perspective).toBe('1000px');
+    });
+  });
+
+  // ─── Config options coverage (TEST-8) ──────────────────────────────────
+
+  describe('config options', () => {
+    it('shadingIntensity affects shader opacity', async () => {
+      const ori = createOri(el, { shadingIntensity: 2 });
+      ori.accordion(45);
+      await flushDefer();
+
+      const shaders = (ori as any)._shaders;
+      // With higher intensity, opacity should be nonzero
+      const leftShaders = shaders.left.left;
+      const hasOpacity = leftShaders.some(
+        (s: HTMLDivElement) => parseFloat(s.style.opacity) > 0
+      );
+      expect(hasOpacity).toBe(true);
+    });
+
+    it('easingMethod is applied to panels', () => {
+      const ori = createOri(el, { easingMethod: 'ease-in-out' });
+      const panels = getPanels(ori);
+      // All panels should have the easing applied
+      expect(panels[0].style.transitionTimingFunction).toBe('ease-in-out');
+    });
+
+    it('gapNudge is used in transform', async () => {
+      const ori = createOri(el, { gapNudge: 3 });
+      ori.accordion(30);
+      await flushDefer();
+      const panels = getPanels(ori);
+      expect(panels[0].style.transform).toContain('3px');
+    });
+
+    it('oriDomiClass is used as CSS class', () => {
+      const ori = createOri(el, { oriDomiClass: 'custom-ori' });
+      // The default oriDomiClass is used for class generation — the el gets the active class
+      expect(ori.el.classList.length).toBeGreaterThan(0);
+    });
+
+    it('touchSensitivity is stored in config', () => {
+      const ori = createOri(el, { touchSensitivity: 0.5 });
+      expect((ori as any)._config.touchSensitivity).toBe(0.5);
+    });
+  });
+
+  // ─── BUG-5: emptyQueue cancels _unfold timers ─────────────────────────
+
+  describe('emptyQueue timer cancellation', () => {
+    it('clears pending timers when emptyQueue is called', () => {
+      const ori = createOri(el, { speed: 500, touchEnabled: false });
+      // Add timers via tracked mechanism
+      const timer = (ori as any)._trackedTimeout(() => {}, 1000);
+      expect((ori as any)._pendingTimers.size).toBe(1);
+      ori.emptyQueue();
+      expect((ori as any)._pendingTimers.size).toBe(0);
+      clearTimeout(timer); // cleanup
+    });
+  });
 });

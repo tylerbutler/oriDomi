@@ -3,7 +3,7 @@ import { test, expect } from "@playwright/test";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-const SCREENSHOT_OPTS = SCREENSHOT_OPTS;
+const SCREENSHOT_OPTS = { maxDiffPixelRatio: 0.01 };
 
 async function loadFixture(page) {
   await page.goto("/tests/fixture.html");
