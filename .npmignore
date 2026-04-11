@@ -4,9 +4,12 @@ etc/
 docs/
 demo/
 index.html
-bower.json
-CNAME
-component.json
 favicon.png
-oridomi.jquery.json
-
+tests/
+test-results/
+playwright-report/
+src/
+tsup.config.ts
+tsconfig.json
+playwright.config.js
+.gitignore

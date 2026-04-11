@@ -16,14 +16,43 @@
 
 [Click here](https://oxism.com/oriDomi) for examples, documentation and notes.
 
-Read the [annotated source](https://oxism.com/oriDomi/docs/oridomi.html) for a
-detailed look.
+## Installation
 
-If you want to work on the source, run `npm install` after first cloning to
-install local package dependencies.
+```bash
+npm install oridomi
+```
 
-Run `cake watch` to automatically compile as you work.
+## Usage
 
-`cake build` will update the annotated source and the minified version as well.
+### ESM (recommended)
+
+```js
+import OriDomi from 'oridomi';
+
+const el = document.querySelector('#my-element');
+const fold = new OriDomi(el, { speed: 500 });
+fold.accordion(30);
+```
+
+### Script tag
+
+For use without a bundler, include the IIFE build which exposes `window.OriDomi`:
+
+```html
+<script src="https://unpkg.com/oridomi/dist/oridomi.iife.js"></script>
+<script>
+  const fold = new OriDomi(document.querySelector('#my-element'));
+  fold.accordion(30);
+</script>
+```
+
+## Development
+
+```bash
+npm install
+npm run build    # Build ESM + IIFE outputs to dist/
+npm run dev      # Watch mode
+npm test         # Run Playwright tests
+```
 
 _The DOM is your oyster._

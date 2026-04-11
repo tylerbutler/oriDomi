@@ -3,3 +3,4 @@ node_modules/
 etc/
 test-results/
 playwright-report/
+dist/
