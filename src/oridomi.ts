@@ -164,6 +164,22 @@ type EffectFn = (this: OriDomi, ...args: any[]) => void;
 type QueueEntry = [EffectFn, number, Anchor, EffectOptions];
 type PanelIteratorFn = (panel: HTMLDivElement, i: number, len: number) => void;
 
+/** Public API type for effect methods (accordion, curl, ramp). */
+interface EffectMethod {
+  (angle?: number, options?: EffectOptions): OriDomi;
+  (angle?: number, callback?: EffectOptions['callback']): OriDomi;
+  (angle?: number, anchor?: Anchor | string, options?: EffectOptions): OriDomi;
+  (angle?: number, anchor?: Anchor | string, callback?: EffectOptions['callback']): OriDomi;
+}
+
+/** Public API type for foldUp/unfold (no angle parameter). */
+interface FoldMethod {
+  (options?: EffectOptions): OriDomi;
+  (callback?: EffectOptions['callback']): OriDomi;
+  (anchor?: Anchor | string, options?: EffectOptions): OriDomi;
+  (anchor?: Anchor | string, callback?: EffectOptions['callback']): OriDomi;
+}
+
 // Style Generation
 
 let styleBuffer = '';
@@ -336,11 +352,22 @@ const defaults: OriDomiOptions = {
   touchEndCallback: noOp,
 };
 
+/** Internal interface exposing members needed by the prep() decorator. */
+interface OriDomiInternal {
+  _touchStarted: boolean;
+  _lastOp: LastOperation;
+  _queue: QueueEntry[];
+  _normalizeAngle(angle: number): number;
+  _getLonghandAnchor(shorthand: unknown): Anchor;
+  _step(): void;
+}
+
 // The `prep` decorator normalizes arguments for effect methods, manages the
 // queue, and makes methods chainable.
 function prep(fn: EffectFn): (this: OriDomi, ...args: unknown[]) => OriDomi {
   return function (this: OriDomi, ...args: unknown[]): OriDomi {
-    if ((this as any)._touchStarted) {
+    const self = this as unknown as OriDomiInternal;
+    if (self._touchStarted) {
       fn.apply(this, args);
       return this;
     }
@@ -384,17 +411,17 @@ function prep(fn: EffectFn): (this: OriDomi, ...args: unknown[]) => OriDomi {
     }
 
     if (angle == null) {
-      angle = (this as any)._lastOp.angle || 0;
+      angle = self._lastOp.angle || 0;
     }
-    anchor ||= (this as any)._lastOp.anchor;
+    anchor ||= self._lastOp.anchor;
 
-    (this as any)._queue.push([
+    self._queue.push([
       fn,
-      (this as any)._normalizeAngle(angle),
-      (this as any)._getLonghandAnchor(anchor),
+      self._normalizeAngle(angle),
+      self._getLonghandAnchor(anchor),
       opt,
     ] as QueueEntry);
-    (this as any)._step();
+    self._step();
     return this;
   };
 }
@@ -646,7 +673,7 @@ class OriDomi {
 
   // Internal Methods (arrow function class fields for bound methods)
 
-  _step = (): void => {
+  private _step = (): void => {
     if (this._inTrans || !this._queue.length) return;
     this._inTrans = true;
     const [fn, angle, anchor, options] = this._queue.shift()!;
@@ -711,7 +738,7 @@ class OriDomi {
     this._lastOp = lastOp;
   }
 
-  _onTransitionEnd = (e: Event): void => {
+  private _onTransitionEnd = (e: Event): void => {
     (e.currentTarget as HTMLElement).removeEventListener(
       TRANSITION_END,
       this._onTransitionEnd,
@@ -720,7 +747,7 @@ class OriDomi {
     this._conclude(this._lastOp.options?.callback, e);
   };
 
-  _conclude = (cb?: EffectOptions['callback'], event?: Event): void => {
+  private _conclude = (cb?: EffectOptions['callback'], event?: Event): void => {
     defer(() => {
       this._inTrans = false;
       this._step();
@@ -842,7 +869,7 @@ class OriDomi {
     }
   }
 
-  _stageReset = (anchor: Anchor, cb: () => void): void => {
+  private _stageReset = (anchor: Anchor, cb: () => void): void => {
     const fn = (e?: Event): void => {
       if (e) {
         (e.currentTarget as HTMLElement).removeEventListener(TRANSITION_END, fn, false);
@@ -941,7 +968,7 @@ class OriDomi {
     return e[pageKey];
   }
 
-  _onTouchStart = (e: MouseEvent | TouchEvent): void => {
+  private _onTouchStart = (e: MouseEvent | TouchEvent): void => {
     if (!this._touchEnabled || this.isFoldedUp) return;
     e.preventDefault();
     this.emptyQueue();
@@ -970,7 +997,7 @@ class OriDomi {
     this._config.touchStartCallback(coord, e);
   };
 
-  _onTouchMove = (e: MouseEvent | TouchEvent): void => {
+  private _onTouchMove = (e: MouseEvent | TouchEvent): void => {
     if (!this._touchEnabled || !this._touchStarted) return;
     e.preventDefault();
 
@@ -997,7 +1024,7 @@ class OriDomi {
     this._config.touchMoveCallback(delta, e);
   };
 
-  _onTouchEnd = (e: Event): void => {
+  private _onTouchEnd = (e: Event): void => {
     if (!this._touchEnabled) return;
     this._touchStarted = this._inTrans = false;
     this.el.style.cursor = CURSOR_GRAB;
@@ -1006,12 +1033,12 @@ class OriDomi {
     this._config.touchEndCallback(lastCoord, e);
   };
 
-  _onTouchCancel = (e: Event): void => {
+  private _onTouchCancel = (e: Event): void => {
     if (!this._touchEnabled || !this._touchStarted) return;
     this._onTouchEnd(e);
   };
 
-  _onMouseOut = (e: MouseEvent): void => {
+  private _onMouseOut = (e: MouseEvent): void => {
     if (!this._touchEnabled || !this._touchStarted) return;
     const related = e.relatedTarget as Node | null;
     if (related && !this.el.contains(related)) {
@@ -1221,10 +1248,24 @@ class OriDomi {
     return this;
   }
 
-  // Effect Methods (wrapped in prep decorator)
+  // Effect Implementation Methods (proper class methods with full `this` typing)
 
-  accordion = prep(function (this: OriDomi, angle: number, anchor: Anchor, options: EffectOptions): void {
-    (this as any)._iterate(anchor, (panel: HTMLDivElement, i: number) => {
+  /** Apply transform and optionally shade a panel. Shared by multiple effects (DRY-2). */
+  private _applyTransformAndShade(
+    panel: HTMLDivElement,
+    i: number,
+    anchor: Anchor,
+    angle: number,
+    fracture?: boolean
+  ): void {
+    this._transformPanel(panel, angle, anchor, fracture);
+    if (this._shading) {
+      this._setShader(i, anchor, angle);
+    }
+  }
+
+  private _accordionImpl(angle: number, anchor: Anchor, options: EffectOptions): void {
+    this._iterate(anchor, (panel, i) => {
       let deg: number;
       if (i % 2 !== 0 && !options.twist) {
         deg = -angle;
@@ -1244,77 +1285,79 @@ class OriDomi {
 
       if (options.stairs) deg *= -1;
 
-      (this as any)._transformPanel(panel, deg, anchor, options.fracture);
+      this._transformPanel(panel, deg, anchor, options.fracture);
 
-      if ((this as any)._shading) {
+      if (this._shading) {
         if (options.twist || options.fracture || (i === 0 && options.sticky)) {
-          (this as any)._setShader(i, anchor, 0);
+          this._setShader(i, anchor, 0);
         } else if (Math.abs(deg) !== 180) {
-          (this as any)._setShader(i, anchor, deg);
+          this._setShader(i, anchor, deg);
         }
       }
     });
-  });
+  }
 
-  curl = prep(function (this: OriDomi, angle: number, anchor: Anchor, _options: EffectOptions): void {
-    const config = (this as any)._config as OriDomiOptions;
+  private _curlImpl(angle: number, anchor: Anchor, _options: EffectOptions): void {
     angle /= isVerticalAnchor(anchor)
-      ? (config.vPanels as number[]).length
-      : (config.hPanels as number[]).length;
+      ? (this._config.vPanels as number[]).length
+      : (this._config.hPanels as number[]).length;
 
-    (this as any)._iterate(anchor, (panel: HTMLDivElement, i: number) => {
-      (this as any)._transformPanel(panel, angle, anchor);
-      if ((this as any)._shading) {
-        (this as any)._setShader(i, anchor, 0);
-      }
+    this._iterate(anchor, (panel, i) => {
+      this._applyTransformAndShade(panel, i, anchor, angle);
     });
-  });
+  }
 
-  ramp = prep(function (this: OriDomi, angle: number, anchor: Anchor, _options: EffectOptions): void {
-    const panels = (this as any)._panels[anchor];
+  private _rampImpl(angle: number, anchor: Anchor, _options: EffectOptions): void {
+    const panels = this._panels[anchor];
     if (panels.length < 2) return;
-    (this as any)._transformPanel(panels[1], angle, anchor);
+    this._transformPanel(panels[1], angle, anchor);
 
-    (this as any)._iterate(anchor, (panel: HTMLDivElement, i: number) => {
-      if (i !== 1) (this as any)._transformPanel(panel, 0, anchor);
-      if ((this as any)._shading) {
-        (this as any)._setShader(i, anchor, 0);
+    this._iterate(anchor, (panel, i) => {
+      if (i !== 1) this._transformPanel(panel, 0, anchor);
+      if (this._shading) {
+        this._setShader(i, anchor, 0);
       }
     });
-  });
+  }
 
-  foldUp = prep(function (this: OriDomi, anchor: Anchor, options: EffectOptions): void {
+  private _foldUpImpl(anchor: Anchor, options: EffectOptions): void {
     const callback = options?.callback;
-    if ((this as any).isFoldedUp) {
+    if (this.isFoldedUp) {
       callback?.();
       return;
     }
-    (this as any)._stageReset(anchor, () => {
-      (this as any)._inTrans = (this as any).isFoldedUp = true;
+    this._stageReset(anchor, () => {
+      this._inTrans = this.isFoldedUp = true;
 
-      (this as any)._iterate(anchor, (panel: HTMLDivElement, i: number, len: number) => {
-        let duration = (this as any)._config.speed;
+      this._iterate(anchor, (panel, i, len) => {
+        let duration = this._config.speed;
         if (i === 0) duration /= 2;
-        const delay = (this as any)._setPanelTrans(anchor, panel, i, len, duration, DELAY_REVERSE);
+        const delay = this._setPanelTrans(anchor, panel, i, len, duration, DELAY_REVERSE);
 
-        const deferTimer = (this as any)._trackedTimeout(() => {
-          (this as any)._pendingTimers.delete(deferTimer);
-          (this as any)._transformPanel(panel, i === 0 ? 90 : 170, anchor);
-          const innerTimer = (this as any)._trackedTimeout(() => {
-            (this as any)._pendingTimers.delete(innerTimer);
+        const deferTimer = this._trackedTimeout(() => {
+          this._pendingTimers.delete(deferTimer);
+          this._transformPanel(panel, i === 0 ? 90 : 170, anchor);
+          const innerTimer = this._trackedTimeout(() => {
+            this._pendingTimers.delete(innerTimer);
             if (i === 0) {
-              (this as any)._inTrans = false;
+              this._inTrans = false;
               callback?.();
             } else {
               hideEl(panel.children[0] as HTMLElement);
             }
-          }, delay + (this as any)._config.speed * 0.25);
+          }, delay + this._config.speed * 0.25);
         }, 0);
       });
     });
-  });
+  }
 
-  unfold = prep(OriDomi.prototype._unfold as unknown as EffectFn);
+  // Public Effect Methods (wrapped in prep decorator for argument normalization + queueing)
+
+  accordion: EffectMethod = prep(OriDomi.prototype._accordionImpl) as unknown as EffectMethod;
+  curl: EffectMethod = prep(OriDomi.prototype._curlImpl) as unknown as EffectMethod;
+  ramp: EffectMethod = prep(OriDomi.prototype._rampImpl) as unknown as EffectMethod;
+  foldUp: FoldMethod = prep(OriDomi.prototype._foldUpImpl) as unknown as FoldMethod;
+  unfold: FoldMethod = prep(OriDomi.prototype._unfold) as unknown as FoldMethod;
 
   // Convenience Methods
 
@@ -1352,15 +1395,17 @@ class OriDomi {
     return this.accordion(this._config.maxAngle, anchor, options) as unknown as this;
   }
 
-  map(fn: (angle: number, i: number, len: number) => number): (...args: unknown[]) => OriDomi {
-    return prep(function (this: OriDomi, angle: number, anchor: Anchor, options: EffectOptions): void {
-      (this as any)._iterate(anchor, (panel: HTMLDivElement, i: number, len: number) => {
-        (this as any)._transformPanel(panel, fn(angle, i, len), anchor, options.fracture);
+  map(fn: (angle: number, i: number, len: number) => number): EffectMethod {
+    const self = this;
+    const impl = function (this: OriDomi, angle: number, anchor: Anchor, options: EffectOptions): void {
+      self._iterate(anchor, (panel, i, len) => {
+        self._transformPanel(panel, fn(angle, i, len), anchor, options.fracture);
       });
-    }).bind(this);
+    };
+    return prep(impl).bind(this) as unknown as EffectMethod;
   }
 }
 
 export default OriDomi;
 export { OriDomi };
-export type { Anchor, EffectOptions };
+export type { Anchor, EffectOptions, EffectMethod, FoldMethod };
