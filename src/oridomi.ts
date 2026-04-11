@@ -17,31 +17,27 @@ const noOp = (): void => {};
 
 const capitalize = (s: string): string => s[0].toUpperCase() + s.slice(1);
 
-// Simplified CSS property map — no vendor prefixes needed for modern browsers.
-const css = {
-  transform: 'transform',
-  transformOrigin: 'transformOrigin',
-  transformStyle: 'transformStyle',
-  transitionProperty: 'transitionProperty',
-  transitionDuration: 'transitionDuration',
-  transitionDelay: 'transitionDelay',
-  transitionTimingFunction: 'transitionTimingFunction',
-  perspective: 'perspective',
-  perspectiveOrigin: 'perspectiveOrigin',
-  backfaceVisibility: 'backfaceVisibility',
-  boxSizing: 'boxSizing',
-  mask: 'mask',
-  gradientProp: 'linear-gradient',
-  grab: 'grab',
-  grabbing: 'grabbing',
-  transformProp: 'transform',
-  transitionEnd: 'transitionend',
-} as const;
+// CSS constants — vendor prefixes no longer needed for modern browsers.
+const GRADIENT_FN = 'linear-gradient';
+const CURSOR_GRAB = 'grab';
+const CURSOR_GRABBING = 'grabbing';
+const TRANSITION_END = 'transitionend';
 
 // Anchor lists and their axis pairs.
 const anchorList: Anchor[] = ['left', 'right', 'top', 'bottom'];
 const anchorListV: Anchor[] = anchorList.slice(0, 2) as Anchor[];
 const anchorListH: Anchor[] = anchorList.slice(2) as Anchor[];
+
+function isVerticalAnchor(anchor: Anchor): boolean {
+  return anchorListV.includes(anchor);
+}
+
+const anchorShorthands: Record<string, Anchor> = {
+  left: 'left', l: 'left', '4': 'left',
+  right: 'right', r: 'right', '2': 'right',
+  top: 'top', t: 'top', '1': 'top',
+  bottom: 'bottom', b: 'bottom', '3': 'bottom',
+};
 
 const baseName = libName.toLowerCase();
 
@@ -124,17 +120,14 @@ let styleBuffer = '';
 
 function addStyle(selector: string, rules: Record<string, string>): void {
   let style = `.${selector}{`;
-  for (let [prop, val] of Object.entries(rules)) {
-    if (prop in css) {
-      prop = (css as Record<string, string>)[prop];
-    }
+  for (const [prop, val] of Object.entries(rules)) {
     style += `${prop.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase()}:${val};`;
   }
   styleBuffer += style + '}';
 }
 
 function getGradient(anchor: string): string {
-  return `${css.gradientProp}(${anchor}, rgba(0, 0, 0, .5) 0%, rgba(255, 255, 255, .35) 100%)`;
+  return `${GRADIENT_FN}(${anchor}, rgba(0, 0, 0, .5) 0%, rgba(255, 255, 255, .35) 100%)`;
 }
 
 function createEl(className: string): HTMLDivElement {
@@ -260,7 +253,7 @@ if (isSupported) {
     height: '100%',
     padding: '0',
     position: 'absolute',
-    transitionProperty: css.transformProp,
+    transitionProperty: 'transform',
     transformOrigin: 'left',
     transformStyle: p3d,
   });
@@ -372,7 +365,7 @@ class OriDomi {
   isFoldedUp = false;
 
   // Internal config
-  private _config!: OriDomiOptions;
+  private _config: OriDomiOptions = { ...defaults };
   private _queue: QueueEntry[] = [];
   private _panels: Record<Anchor, HTMLDivElement[]> = {} as any;
   private _stages: Record<Anchor, HTMLDivElement> = {} as any;
@@ -391,6 +384,7 @@ class OriDomi {
   private _yLast = 0;
   private _x1 = 0;
   private _y1 = 0;
+  private _origParentTransformStyle = '';
 
   constructor(el: string | HTMLElement, options: Partial<OriDomiOptions> = {}) {
     if (!isSupported) return;
@@ -407,10 +401,7 @@ class OriDomi {
     }
 
     // Fill in passed options with defaults.
-    this._config = {} as OriDomiOptions;
-    for (const [k, v] of Object.entries(defaults)) {
-      (this._config as any)[k] = k in options ? (options as any)[k] : v;
-    }
+    this._config = { ...defaults, ...options } as OriDomiOptions;
 
     this._config.ripple = Number(this._config.ripple);
     this._queue = [];
@@ -426,9 +417,6 @@ class OriDomi {
     if (this._shading) {
       this._shaders = {} as Record<Anchor, Record<Anchor, HTMLDivElement[]>>;
       shaderProtos = {};
-      const shaderProto = createEl('shader');
-      shaderProto.style.transitionDuration = this._config.speed + 'ms';
-      shaderProto.style.transitionTimingFunction = this._config.easingMethod;
     }
 
     const stageProto = createEl('stage');
@@ -439,14 +427,9 @@ class OriDomi {
       this._stages[anchor] = cloneEl(stageProto, false, 'stage' + capitalize(anchor));
       if (this._shading) {
         this._shaders[anchor] = {} as Record<Anchor, HTMLDivElement[]>;
-        if (anchorListV.includes(anchor)) {
-          for (const side of anchorListV) {
-            this._shaders[anchor][side] = [];
-          }
-        } else {
-          for (const side of anchorListH) {
-            this._shaders[anchor][side] = [];
-          }
+        const sides = isVerticalAnchor(anchor) ? anchorListV : anchorListH;
+        for (const side of sides) {
+          this._shaders[anchor][side] = [];
         }
         const shaderProto = createEl('shader');
         shaderProto.style.transitionDuration = this._config.speed + 'ms';
@@ -486,7 +469,7 @@ class OriDomi {
       let count: number;
 
       if (typeof panelConfig === 'number') {
-        count = Math.abs(parseInt(String(panelConfig), 10));
+        count = Math.max(1, Math.abs(parseInt(String(panelConfig), 10)));
         const percent = 100 / count;
         panelConfig = Array.from({ length: count }, () => percent);
         (this._config as any)[panelKey] = panelConfig;
@@ -495,6 +478,9 @@ class OriDomi {
         const sum = (panelConfig as number[]).reduce((p, c) => p + c, 0);
         if (sum < 99 || sum > 100.1) {
           throw new Error(`${libName}: Panel percentages do not sum to 100`);
+        }
+        if ((panelConfig as number[]).some(p => p <= 0)) {
+          throw new Error(`${libName}: All panel percentages must be positive`);
         }
       }
 
@@ -521,7 +507,6 @@ class OriDomi {
           let prev: number;
 
           if (rightOrBottom) {
-            (panel.style as any)[anchor] = anchor;
             index = panelConfigArr.length - panelN - 1;
             prev = index + 1;
           } else {
@@ -590,6 +575,7 @@ class OriDomi {
     this.el.innerHTML = '';
     this.el.appendChild(this._cloneEl);
     this.el.appendChild(this._stageHolder);
+    this._origParentTransformStyle = (this.el.parentNode as HTMLElement).style.transformStyle;
     (this.el.parentNode as HTMLElement).style.transformStyle = 'preserve-3d';
 
     this.accordion(0);
@@ -613,14 +599,22 @@ class OriDomi {
       this._setCallback({ angle, anchor, options, fn });
       const args: [number, Anchor, EffectOptions] | [Anchor, EffectOptions] =
         fn.length < 3 ? [anchor, options] : [angle, anchor, options];
-      fn.apply(this, args);
+      try {
+        fn.apply(this, args);
+      } catch (err) {
+        this._inTrans = false;
+        console?.warn(`${libName}: Effect execution failed`, err);
+      }
     };
 
     if (this.isFoldedUp) {
       if (fn.length === 2) {
         next();
       } else {
-        this._unfold(next);
+        this._unfold(() => {
+          this._setCallback({ angle, anchor, options, fn });
+          // Don't re-call fn — unfold already did its work.
+        });
       }
     } else if (anchor !== this._lastOp.anchor) {
       this._stageReset(anchor, next);
@@ -651,7 +645,7 @@ class OriDomi {
       this._conclude(operation.options.callback);
     } else {
       this._panels[this._lastOp.anchor][0].addEventListener(
-        css.transitionEnd,
+        TRANSITION_END,
         this._onTransitionEnd,
         false
       );
@@ -661,7 +655,7 @@ class OriDomi {
 
   _onTransitionEnd = (e: Event): void => {
     (e.currentTarget as HTMLElement).removeEventListener(
-      css.transitionEnd,
+      TRANSITION_END,
       this._onTransitionEnd,
       false
     );
@@ -755,7 +749,7 @@ class OriDomi {
     panel.style.transitionDelay = delayMs + 'ms';
 
     if (this._shading) {
-      const sides = anchorListV.includes(anchor) ? anchorListV : anchorListH;
+      const sides = isVerticalAnchor(anchor) ? anchorListV : anchorListH;
       for (const side of sides) {
         const shader = this._shaders[anchor][side][i];
         shader.style.transitionDuration = duration + 'ms';
@@ -777,29 +771,11 @@ class OriDomi {
       opacity *= 0.4;
     }
 
-    if (anchorListV.includes(anchor)) {
-      let a: number, b: number;
-      if (angle < 0) {
-        a = opacity;
-        b = 0;
-      } else {
-        a = 0;
-        b = opacity;
-      }
-      (this._shaders[anchor].left[n].style as any).opacity = a;
-      (this._shaders[anchor].right[n].style as any).opacity = b;
-    } else {
-      let a: number, b: number;
-      if (angle < 0) {
-        a = 0;
-        b = opacity;
-      } else {
-        a = opacity;
-        b = 0;
-      }
-      (this._shaders[anchor].top[n].style as any).opacity = a;
-      (this._shaders[anchor].bottom[n].style as any).opacity = b;
-    }
+    const isVert = isVerticalAnchor(anchor);
+    const [sideA, sideB]: [Anchor, Anchor] = isVert ? ['left', 'right'] : ['top', 'bottom'];
+    const negative = isVert ? (angle < 0) : (angle >= 0);
+    (this._shaders[anchor][sideA][n].style as any).opacity = negative ? opacity : 0;
+    (this._shaders[anchor][sideB][n].style as any).opacity = negative ? 0 : opacity;
   }
 
   private _showStage(anchor: Anchor): void {
@@ -830,7 +806,7 @@ class OriDomi {
   _stageReset = (anchor: Anchor, cb: () => void): void => {
     const fn = (e?: Event): void => {
       if (e) {
-        (e.currentTarget as HTMLElement).removeEventListener(css.transitionEnd, fn, false);
+        (e.currentTarget as HTMLElement).removeEventListener(TRANSITION_END, fn, false);
       }
       this._showStage(anchor);
       defer(cb);
@@ -841,7 +817,7 @@ class OriDomi {
       return;
     }
 
-    this._panels[this._lastOp.anchor][0].addEventListener(css.transitionEnd, fn, false);
+    this._panels[this._lastOp.anchor][0].addEventListener(TRANSITION_END, fn, false);
     this._iterate(this._lastOp.anchor, (panel, i) => {
       this._transformPanel(panel, 0, this._lastOp.anchor);
       if (this._shading) {
@@ -851,30 +827,11 @@ class OriDomi {
   };
 
   private _getLonghandAnchor(shorthand: unknown): Anchor {
-    switch (String(shorthand)) {
-      case 'left':
-      case 'l':
-      case '4':
-        return 'left';
-      case 'right':
-      case 'r':
-      case '2':
-        return 'right';
-      case 'top':
-      case 't':
-      case '1':
-        return 'top';
-      case 'bottom':
-      case 'b':
-      case '3':
-        return 'bottom';
-      default:
-        return 'left';
-    }
+    return anchorShorthands[String(shorthand)] ?? 'left';
   }
 
   private _setCursor(bool: boolean = this._touchEnabled): void {
-    this.el.style.cursor = bool ? css.grab : 'default';
+    this.el.style.cursor = bool ? CURSOR_GRAB : 'default';
   }
 
   // Touch / Drag Event Handlers
@@ -897,14 +854,14 @@ class OriDomi {
       ['TouchStart', 'MouseDown'],
       ['TouchEnd', 'MouseUp'],
       ['TouchMove', 'MouseMove'],
-      ['TouchLeave', 'MouseLeave'],
+      ['TouchCancel', 'MouseLeave'],
     ];
 
     const mouseLeaveSupport = 'onmouseleave' in window;
 
     for (const eventPair of eventPairs) {
       for (const eString of eventPair) {
-        if (eString === 'TouchLeave' && !mouseLeaveSupport) {
+        if (eString === 'TouchCancel' && !mouseLeaveSupport) {
           this.el[listenFn]('mouseout', this._onMouseOut as EventListener, false);
           break;
         } else {
@@ -924,10 +881,10 @@ class OriDomi {
     e.preventDefault();
     this.emptyQueue();
     this._touchStarted = true;
-    this.el.style.cursor = css.grabbing;
+    this.el.style.cursor = CURSOR_GRABBING;
     this._setTrans(0, 0);
 
-    this._touchAxis = anchorListV.includes(this._lastOp.anchor) ? 'x' : 'y';
+    this._touchAxis = isVerticalAnchor(this._lastOp.anchor) ? 'x' : 'y';
 
     if (this._touchAxis === 'x') {
       this._xLast = this._lastOp.angle ?? 0;
@@ -941,7 +898,9 @@ class OriDomi {
     if (e.type === 'mousedown') {
       coord = (e as MouseEvent)[pageKey];
     } else {
-      coord = (e as TouchEvent).targetTouches[0][pageKey];
+      const touches = (e as TouchEvent).targetTouches;
+      if (!touches?.length) return;
+      coord = touches[0][pageKey];
     }
 
     if (this._touchAxis === 'x') {
@@ -962,7 +921,9 @@ class OriDomi {
     if (e.type === 'mousemove') {
       current = (e as MouseEvent)[pageKey];
     } else {
-      current = (e as TouchEvent).targetTouches[0][pageKey];
+      const touches = (e as TouchEvent).targetTouches;
+      if (!touches?.length) return;
+      current = touches[0][pageKey];
     }
 
     const startCoord = this._touchAxis === 'x' ? this._x1 : this._y1;
@@ -994,20 +955,21 @@ class OriDomi {
   _onTouchEnd = (e: Event): void => {
     if (!this._touchEnabled) return;
     this._touchStarted = this._inTrans = false;
-    this.el.style.cursor = css.grab;
+    this.el.style.cursor = CURSOR_GRAB;
     this._setTrans(this._config.speed, this._config.ripple as number);
     const lastCoord = this._touchAxis === 'x' ? this._xLast : this._yLast;
     this._config.touchEndCallback(lastCoord, e);
   };
 
-  _onTouchLeave = (e: Event): void => {
+  _onTouchCancel = (e: Event): void => {
     if (!this._touchEnabled || !this._touchStarted) return;
     this._onTouchEnd(e);
   };
 
   _onMouseOut = (e: MouseEvent): void => {
     if (!this._touchEnabled || !this._touchStarted) return;
-    if ((e as any).toElement && !this.el.contains((e as any).toElement)) {
+    const related = e.relatedTarget as Node | null;
+    if (related && !this.el.contains(related)) {
       this._onTouchEnd(e);
     }
   };
@@ -1018,27 +980,25 @@ class OriDomi {
     this._iterate(anchor, (panel, i, len) => {
       const delay = this._setPanelTrans(anchor, panel, i, len, this._config.speed, 1);
 
-      ((p: HTMLDivElement, idx: number, d: number) => {
-        defer(() => {
-          this._transformPanel(p, 0, anchor);
-          if (this._shading) {
-            this._setShader(idx, anchor, 0);
-          }
+      defer(() => {
+        this._transformPanel(panel, 0, anchor);
+        if (this._shading) {
+          this._setShader(i, anchor, 0);
+        }
 
-          setTimeout(() => {
-            showEl(p.children[0] as HTMLElement);
-            if (idx === len - 1) {
-              this._inTrans = this.isFoldedUp = false;
-              callback?.();
-              this._lastOp.fn = this.accordion as unknown as EffectFn;
-              this._lastOp.angle = 0;
-            }
-            defer(() => {
-              p.style.transitionDuration = this._config.speed + 'ms';
-            });
-          }, d + this._config.speed * 0.25);
-        });
-      })(panel, i, delay);
+        setTimeout(() => {
+          showEl(panel.children[0] as HTMLElement);
+          if (i === len - 1) {
+            this._inTrans = this.isFoldedUp = false;
+            callback?.();
+            this._lastOp.fn = this.accordion as unknown as EffectFn;
+            this._lastOp.angle = 0;
+          }
+          defer(() => {
+            panel.style.transitionDuration = this._config.speed + 'ms';
+          });
+        }, delay + this._config.speed * 0.25);
+      });
     });
   }
 
@@ -1093,10 +1053,18 @@ class OriDomi {
   }
 
   destroy(callback?: () => void): null {
+    this.emptyQueue();
+    // Remove any pending transitionend listener
+    this._panels[this._lastOp.anchor]?.[0]?.removeEventListener(
+      TRANSITION_END, this._onTransitionEnd, false
+    );
     this.freeze(() => {
       this._setTouch(false);
       this.el.innerHTML = this._cloneEl.innerHTML;
       this.el.classList.remove(elClasses.active);
+      if (this.el.parentNode) {
+        (this.el.parentNode as HTMLElement).style.transformStyle = this._origParentTransformStyle;
+      }
       callback?.();
     });
     return null;
@@ -1123,6 +1091,7 @@ class OriDomi {
 
   wait(ms: number): this {
     const fn = (): void => {
+      this._inTrans = true;
       setTimeout(this._conclude, ms);
     };
     if (this._inTrans) {
@@ -1223,7 +1192,7 @@ class OriDomi {
 
   curl = prep(function (this: OriDomi, angle: number, anchor: Anchor, _options: EffectOptions): void {
     const config = (this as any)._config as OriDomiOptions;
-    angle /= anchorListV.includes(anchor)
+    angle /= isVerticalAnchor(anchor)
       ? (config.vPanels as number[]).length
       : (config.hPanels as number[]).length;
 
@@ -1236,7 +1205,9 @@ class OriDomi {
   });
 
   ramp = prep(function (this: OriDomi, angle: number, anchor: Anchor, _options: EffectOptions): void {
-    (this as any)._transformPanel((this as any)._panels[anchor][1], angle, anchor);
+    const panels = (this as any)._panels[anchor];
+    if (panels.length < 2) return;
+    (this as any)._transformPanel(panels[1], angle, anchor);
 
     (this as any)._iterate(anchor, (panel: HTMLDivElement, i: number) => {
       if (i !== 1) (this as any)._transformPanel(panel, 0, anchor);
@@ -1259,19 +1230,17 @@ class OriDomi {
         if (i === 0) duration /= 2;
         const delay = (this as any)._setPanelTrans(anchor, panel, i, len, duration, 2);
 
-        ((p: HTMLDivElement, idx: number, d: number) => {
-          defer(() => {
-            (this as any)._transformPanel(p, idx === 0 ? 90 : 170, anchor);
-            setTimeout(() => {
-              if (idx === 0) {
-                (this as any)._inTrans = false;
-                callback?.();
-              } else {
-                hideEl(p.children[0] as HTMLElement);
-              }
-            }, d + (this as any)._config.speed * 0.25);
-          });
-        })(panel, i, delay);
+        defer(() => {
+          (this as any)._transformPanel(panel, i === 0 ? 90 : 170, anchor);
+          setTimeout(() => {
+            if (i === 0) {
+              (this as any)._inTrans = false;
+              callback?.();
+            } else {
+              hideEl(panel.children[0] as HTMLElement);
+            }
+          }, delay + (this as any)._config.speed * 0.25);
+        });
       });
     });
   });
@@ -1325,3 +1294,4 @@ class OriDomi {
 
 export default OriDomi;
 export { OriDomi };
+export type { Anchor, EffectOptions };

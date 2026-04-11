@@ -3,6 +3,8 @@ import { test, expect } from "@playwright/test";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
+const SCREENSHOT_OPTS = SCREENSHOT_OPTS;
+
 async function loadFixture(page) {
   await page.goto("/tests/fixture.html");
   await page.waitForFunction(() => typeof window.OriDomi === "function");
@@ -36,6 +38,13 @@ function applyEffect(page, method, ...args) {
     },
     { method, args }
   );
+}
+
+async function expectRotation(page) {
+  const has = await page.evaluate(() =>
+    document.querySelector("#target").innerHTML.includes("rotate")
+  );
+  expect(has).toBe(true);
 }
 
 // ─── Construction ───────────────────────────────────────────────────────────
@@ -120,33 +129,25 @@ test.describe("effects", () => {
 
   test("accordion folds the element", async ({ page }) => {
     await applyEffect(page, "accordion", 40, "left");
-    const hasRotation = await page.evaluate(() =>
-      document.querySelector("#target").innerHTML.includes("rotate")
-    );
-    expect(hasRotation).toBe(true);
+    await expectRotation(page);
   });
 
   test("accordion works with all four anchors", async ({ page }) => {
     for (const anchor of ["left", "right", "top", "bottom"]) {
       await applyEffect(page, "accordion", 30, anchor);
+      await expectRotation(page);
       await applyEffect(page, "reset");
     }
   });
 
   test("curl applies transforms", async ({ page }) => {
     await applyEffect(page, "curl", 40, "left");
-    const has = await page.evaluate(() =>
-      document.querySelector("#target").innerHTML.includes("rotate")
-    );
-    expect(has).toBe(true);
+    await expectRotation(page);
   });
 
   test("ramp applies transforms", async ({ page }) => {
     await applyEffect(page, "ramp", 30, "left");
-    const has = await page.evaluate(() =>
-      document.querySelector("#target").innerHTML.includes("rotate")
-    );
-    expect(has).toBe(true);
+    await expectRotation(page);
   });
 
   test("foldUp folds the element", async ({ page }) => {
@@ -165,50 +166,32 @@ test.describe("effects", () => {
 
   test("reveal applies transforms", async ({ page }) => {
     await applyEffect(page, "reveal", 30, "left");
-    const has = await page.evaluate(() =>
-      document.querySelector("#target").innerHTML.includes("rotate")
-    );
-    expect(has).toBe(true);
+    await expectRotation(page);
   });
 
   test("stairs applies transforms", async ({ page }) => {
     await applyEffect(page, "stairs", 30, "left");
-    const has = await page.evaluate(() =>
-      document.querySelector("#target").innerHTML.includes("rotate")
-    );
-    expect(has).toBe(true);
+    await expectRotation(page);
   });
 
   test("fracture applies transforms", async ({ page }) => {
     await applyEffect(page, "fracture", 20, "left");
-    const has = await page.evaluate(() =>
-      document.querySelector("#target").innerHTML.includes("rotate")
-    );
-    expect(has).toBe(true);
+    await expectRotation(page);
   });
 
   test("twist applies transforms", async ({ page }) => {
     await applyEffect(page, "twist", 20, "left");
-    const has = await page.evaluate(() =>
-      document.querySelector("#target").innerHTML.includes("rotate")
-    );
-    expect(has).toBe(true);
+    await expectRotation(page);
   });
 
   test("collapse folds the element", async ({ page }) => {
     await applyEffect(page, "collapse", "left");
-    const has = await page.evaluate(() =>
-      document.querySelector("#target").innerHTML.includes("rotate")
-    );
-    expect(has).toBe(true);
+    await expectRotation(page);
   });
 
   test("collapseAlt folds the element", async ({ page }) => {
     await applyEffect(page, "collapseAlt", "left");
-    const has = await page.evaluate(() =>
-      document.querySelector("#target").innerHTML.includes("rotate")
-    );
-    expect(has).toBe(true);
+    await expectRotation(page);
   });
 });
 
