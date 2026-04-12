@@ -48,6 +48,8 @@ For use without a bundler, include the IIFE build which exposes `window.OriDomi`
 
 ## Development
 
+Requires Node.js 22.
+
 ```bash
 npm install
 npm run build    # Build ESM + IIFE outputs to dist/

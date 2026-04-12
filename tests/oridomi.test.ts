@@ -617,6 +617,25 @@ describe("OriDomi", () => {
 			await flushDefer();
 			expect((ori as any)._inTrans).toBe(false);
 		});
+
+		it("emptyQueue cancels active wait timers from the current operation", async () => {
+			vi.useFakeTimers();
+			try {
+				const ori = createOri(el);
+				await vi.runAllTimersAsync();
+				const conclude = vi.fn();
+				(ori as any)._conclude = conclude;
+
+				ori.wait(100);
+				ori.emptyQueue();
+
+				await vi.runAllTimersAsync();
+
+				expect(conclude).not.toHaveBeenCalled();
+			} finally {
+				vi.useRealTimers();
+			}
+		});
 	});
 
 	// ─── Destroy ─────────────────────────────────────────────────────────
@@ -644,6 +663,24 @@ describe("OriDomi", () => {
 			ori.destroy(cb);
 			await flushDefer();
 			expect(cb).toHaveBeenCalled();
+		});
+
+		it("invokes destroy callback after scope teardown settles", async () => {
+			const ori = createOri(el);
+			let teardownSettled = false;
+			const cb = vi.fn(() => {
+				expect(teardownSettled).toBe(true);
+			});
+			(ori as any)._destroyScope = async () => {
+				await Promise.resolve();
+				teardownSettled = true;
+			};
+
+			ori.destroy(cb);
+			await flushDefer();
+			await flushDefer();
+
+			expect(cb).toHaveBeenCalledOnce();
 		});
 	});
 
@@ -683,6 +720,30 @@ describe("OriDomi", () => {
 			ori.modifyContent({ "": "Hello" });
 			// Just verify it doesn't throw and returns the instance
 			expect(ori).toBeInstanceOf(OriDomi);
+		});
+
+		it("treats selector map string content as text", () => {
+			const ori = createOri(el);
+			const content = '<img src="x" onerror="alert(1)">Hello';
+
+			ori.modifyContent({ "": content });
+
+			ori.modifyContent((contentEl) => {
+				expect(contentEl.textContent).toBe(content);
+				expect(contentEl.querySelector("img")).toBeNull();
+			});
+		});
+
+		it("treats selector map content fields as text", () => {
+			const ori = createOri(el);
+			const content = "<strong>Safe text</strong>";
+
+			ori.modifyContent({ "": { content } });
+
+			ori.modifyContent((contentEl) => {
+				expect(contentEl.textContent).toBe(content);
+				expect(contentEl.querySelector("strong")).toBeNull();
+			});
 		});
 	});
 
@@ -1149,24 +1210,48 @@ describe("OriDomi", () => {
 			vi.useRealTimers();
 		});
 
+		it("foldUp callback fires once after fold completion", async () => {
+			vi.useFakeTimers();
+			const ori = createOri(el, { speed: 0, touchEnabled: false });
+			ori.accordion(0);
+			await vi.runAllTimersAsync();
+
+			const calls: Array<{ folded: boolean; inTrans: boolean }> = [];
+			ori.foldUp(() => {
+				calls.push({
+					folded: ori.isFoldedUp,
+					inTrans: (ori as any)._inTrans,
+				});
+			});
+
+			for (let i = 0; i < 20; i++) {
+				await vi.runAllTimersAsync();
+			}
+
+			expect(calls).toEqual([{ folded: true, inTrans: false }]);
+			vi.useRealTimers();
+		});
+
 		it("unfold resets isFoldedUp to false", async () => {
 			vi.useFakeTimers();
 			const ori = createOri(el, { speed: 0, touchEnabled: false });
 
 			// Fold up (angle 0 → fast path through _stageReset)
 			ori.accordion(0);
-			await vi.advanceTimersByTimeAsync(0);
+			await vi.runAllTimersAsync();
 
 			ori.foldUp();
-			await vi.advanceTimersByTimeAsync(0);
-			await vi.advanceTimersByTimeAsync(0);
-			await vi.advanceTimersByTimeAsync(100);
+			// Effection uses scope.run + spawn + sleep chains; each needs multiple timer + microtask flushes
+			for (let i = 0; i < 20; i++) {
+				await vi.runAllTimersAsync();
+			}
 			expect(ori.isFoldedUp).toBe(true);
 
 			// Unfold — call directly since it bypasses queue complexities
 			(ori as any)._unfold();
-			await vi.advanceTimersByTimeAsync(0);
-			await vi.advanceTimersByTimeAsync(100);
+			for (let i = 0; i < 20; i++) {
+				await vi.runAllTimersAsync();
+			}
 
 			expect(ori.isFoldedUp).toBe(false);
 			vi.useRealTimers();
@@ -1244,14 +1329,52 @@ describe("OriDomi", () => {
 
 			// Queue an accordion effect — _step should queue unfold first
 			ori.accordion(45);
-			await flushDefer();
+			// Effection uses scope.run + spawn + sleep chains; each needs multiple timer flushes
+			for (let i = 0; i < 10; i++) {
+				await flushDefer();
+			}
 
 			// _step inserts unfold before the accordion; unfold needs transitionend
 			// from _stageReset. Fire it to complete the unfold.
 			fireTransitionEnd(ori);
-			await flushDefer();
+			for (let i = 0; i < 10; i++) {
+				await flushDefer();
+			}
 
 			expect(ori.isFoldedUp).toBe(false);
+			expect((ori as any)._lastOp.angle).toBe(45);
+			expect(getPanels(ori, "left")[0].style.transform).toContain("rotateY(45deg)");
+		});
+
+		it("continues the queue after a public unfold while folded", async () => {
+			const el = createTarget();
+			const ori = createOri(el);
+			await flushDefer();
+
+			ori.accordion(0);
+			for (let i = 0; i < 10; i++) {
+				await flushDefer();
+			}
+			ori.foldUp();
+			for (let i = 0; i < 10; i++) {
+				await flushDefer();
+			}
+			expect(ori.isFoldedUp).toBe(true);
+
+			const unfoldCb = vi.fn();
+			const accordionCb = vi.fn();
+
+			ori.unfold(unfoldCb).accordion(45, { callback: accordionCb });
+			for (let i = 0; i < 20; i++) {
+				await flushDefer();
+			}
+
+			expect(unfoldCb).toHaveBeenCalledTimes(1);
+			expect(accordionCb).toHaveBeenCalledTimes(1);
+			expect((ori as any)._queue).toHaveLength(0);
+			expect((ori as any)._inTrans).toBe(false);
+			expect((ori as any)._lastOp.angle).toBe(45);
+			expect(getPanels(ori, "left")[0].style.transform).toContain("rotateY(45deg)");
 		});
 	});
 

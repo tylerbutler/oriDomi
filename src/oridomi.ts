@@ -7,11 +7,18 @@
 
 // Copyright 2014, MIT License
 
+import {
+	createScope,
+	type Operation,
+	once,
+	race,
+	type Scope,
+	sleep,
+	spawn,
+	type Task,
+} from "effection";
+
 const libName = "OriDomi";
-
-// Utility Functions
-
-const defer = (fn: () => void): number => setTimeout(fn, 0);
 
 const noOp = (): void => {};
 
@@ -471,7 +478,7 @@ class OriDomi {
 	isFoldedUp = false;
 
 	// Internal config
-	private _config: OriDomiOptions = { ...defaults };
+	private readonly _config: OriDomiOptions = { ...defaults };
 	private _queue: QueueEntry[] = [];
 	private readonly _panels: Record<Anchor, HTMLDivElement[]> = {
 		left: [],
@@ -485,23 +492,31 @@ class OriDomi {
 		Record<Anchor, HTMLDivElement[]>
 	>;
 	private _lastOp: LastOperation = { anchor: "left" };
-	private _shading: ShadingMode = "hard";
+	private readonly _shading: ShadingMode = "hard";
 	private _inTrans = false;
 	private _touchEnabled = false;
 	private _touchStarted = false;
 	private _touchAxis: "x" | "y" = "x";
 	private readonly _stageHolder!: HTMLDivElement;
 	private readonly _cloneEl!: HTMLDivElement;
-	private readonly _pendingTimers: Set<ReturnType<typeof setTimeout>> = new Set();
+
+	// Effection structured concurrency scope — replaces manual timer tracking
+	private readonly _scope!: Scope;
+	private readonly _destroyScope!: () => Promise<void>;
+	private _currentOp: Task<void> | null = null;
+	private readonly _tasks = new Set<Task<unknown>>();
 
 	// Touch tracking state
 	private _xLast = 0;
 	private _yLast = 0;
 	private _x1 = 0;
 	private _y1 = 0;
-	private _origParentTransformStyle = "";
+	private readonly _origParentTransformStyle: string = "";
 
 	constructor(el: string | HTMLElement, options: Partial<OriDomiInputOptions> = {}) {
+		// Initialize effection scope early so methods don't crash on partial construction
+		[this._scope, this._destroyScope] = createScope();
+
 		if (!isSupported) {
 			return;
 		}
@@ -645,8 +660,7 @@ class OriDomi {
 							offsets[anchor!]?.push(0);
 						} else {
 							offsets[anchor!]?.push(
-								(offsets[anchor!]![prev]! - 100) *
-									(panelConfigArr[prev]! / panelConfigArr[index]!),
+								(offsets[anchor!]![prev]! - 100) * (panelConfigArr[prev]! / panelConfigArr[index]!),
 							);
 						}
 					}
@@ -722,6 +736,56 @@ class OriDomi {
 
 	// Internal Methods (arrow function class fields for bound methods)
 
+	private _isNormalCancellation(err: unknown): boolean {
+		return err instanceof Error && err.message === "halted";
+	}
+
+	private _handleTaskRejection(err: unknown): void {
+		if (!this._isNormalCancellation(err)) {
+			console?.warn(`${libName}: Effection task failed`, err);
+		}
+	}
+
+	private _trackTask<T>(task: Task<T>): Task<T> {
+		this._tasks.add(task as Task<unknown>);
+		task.then(
+			() => {
+				this._tasks.delete(task as Task<unknown>);
+				if (this._currentOp === task) {
+					this._currentOp = null;
+				}
+			},
+			(err) => {
+				this._tasks.delete(task as Task<unknown>);
+				if (this._currentOp === task) {
+					this._currentOp = null;
+				}
+				this._handleTaskRejection(err);
+			},
+		);
+		return task;
+	}
+
+	private _runTask<T>(operation: () => Operation<T>): Task<T> {
+		return this._trackTask(this._scope.run(operation));
+	}
+
+	private _afterTask<T>(task: Task<T>, cb: (value: T) => void): void {
+		task
+			.then(cb, (err) => {
+				this._handleTaskRejection(err);
+			})
+			.catch((err) => {
+				this._handleTaskRejection(err);
+			});
+	}
+
+	private _haltTask(task: Task<unknown>): void {
+		task.halt().catch((err) => {
+			this._handleTaskRejection(err);
+		});
+	}
+
 	private readonly _step = (): void => {
 		if (this._inTrans || !this._queue.length) {
 			return;
@@ -733,9 +797,27 @@ class OriDomi {
 		}
 
 		const next = (): void => {
-			this._setCallback({ angle, anchor, options, fn });
-			const args: [number, Anchor, EffectOptions] | [Anchor, EffectOptions] =
-				fn.length < 3 ? [anchor, options] : [angle, anchor, options];
+			if (this._usesOwnCallback(fn)) {
+				this._recordLastOp({ angle, anchor, options, fn });
+			} else {
+				this._setCallback({ angle, anchor, options, fn });
+			}
+			const unfoldCallback = (): void => {
+				try {
+					options.callback?.();
+				} finally {
+					this._step();
+				}
+			};
+			const args:
+				| [number, Anchor, EffectOptions]
+				| [Anchor, EffectOptions]
+				| [EffectOptions["callback"]] =
+				fn === (OriDomi.prototype._unfold as unknown as EffectFn)
+					? [unfoldCallback]
+					: fn.length < 3
+						? [anchor, options]
+						: [angle, anchor, options];
 			try {
 				fn.apply(this, args);
 			} catch (err) {
@@ -745,12 +827,17 @@ class OriDomi {
 		};
 
 		if (this.isFoldedUp) {
-			if (fn.length === 2) {
+			if (fn === (OriDomi.prototype._unfold as unknown as EffectFn)) {
+				next();
+			} else if (fn.length === 2) {
 				next();
 			} else {
 				this._unfold(() => {
-					this._setCallback({ angle, anchor, options, fn });
-					// Don't re-call fn — unfold already did its work.
+					if (anchor !== this._lastOp.anchor) {
+						this._stageReset(anchor, next);
+					} else {
+						next();
+					}
 				});
 			}
 		} else if (anchor !== this._lastOp.anchor) {
@@ -759,6 +846,22 @@ class OriDomi {
 			next();
 		}
 	};
+
+	private _usesOwnCallback(fn: EffectFn): boolean {
+		return (
+			fn === (OriDomi.prototype._foldUpImpl as unknown as EffectFn) ||
+			fn === (OriDomi.prototype._unfold as unknown as EffectFn)
+		);
+	}
+
+	private _recordLastOp(operation: {
+		angle: number;
+		anchor: Anchor;
+		options: EffectOptions;
+		fn: EffectFn;
+	}): void {
+		this._lastOp = { ...operation, reset: false };
+	}
 
 	private _isIdenticalOperation(op: LastOperation & { options: EffectOptions }): boolean {
 		if (!this._lastOp.fn) {
@@ -797,31 +900,39 @@ class OriDomi {
 		) {
 			this._conclude(operation.options.callback);
 		} else {
-			this._panels[this._lastOp.anchor][0]?.addEventListener(
-				TRANSITION_END,
-				this._onTransitionEnd,
-				false,
-			);
+			const panel = this._panels[this._lastOp.anchor][0];
+			if (panel) {
+				this._afterTask(this._waitForTransitionEnd(panel), (e) => {
+					this._conclude(this._lastOp.options?.callback, e ?? undefined);
+				});
+			}
 		}
 		this._lastOp = lastOp;
 	}
 
-	private readonly _onTransitionEnd = (e: Event): void => {
-		(e.currentTarget as HTMLElement).removeEventListener(
-			TRANSITION_END,
-			this._onTransitionEnd,
-			false,
+	private readonly _conclude = (cb?: EffectOptions["callback"], event?: Event): void => {
+		this._afterTask(
+			this._runTask(function* () {
+				yield* sleep(0);
+			}),
+			() => {
+				this._inTrans = false;
+				this._step();
+				cb?.(event, this);
+			},
 		);
-		this._conclude(this._lastOp.options?.callback, e);
 	};
 
-	private readonly _conclude = (cb?: EffectOptions["callback"], event?: Event): void => {
-		defer(() => {
-			this._inTrans = false;
-			this._step();
-			cb?.(event, this);
-		});
-	};
+	/** Wait for transitionend with a timeout fallback to prevent stalled queues. */
+	private _waitForTransitionEnd(panel: HTMLElement): Task<Event | null> {
+		const maxWait = this._config.speed * 2 + 100;
+		return this._runTask(function* () {
+			const result = yield* race([once(panel, TRANSITION_END), sleep(maxWait)]);
+			// race returns the value of whichever operation finishes first.
+			// once() returns an Event; sleep() returns void.
+			return (result as Event) ?? null;
+		}) as Task<Event | null>;
+	}
 
 	private static readonly _anchorTransformMap: Record<
 		Anchor,
@@ -947,20 +1058,25 @@ class OriDomi {
 	}
 
 	private readonly _stageReset = (anchor: Anchor, cb: () => void): void => {
-		const fn = (e?: Event): void => {
-			if (e) {
-				(e.currentTarget as HTMLElement).removeEventListener(TRANSITION_END, fn, false);
-			}
+		const finish = (): void => {
 			this._showStage(anchor);
-			defer(cb);
+			this._afterTask(
+				this._runTask(function* () {
+					yield* sleep(0);
+				}),
+				cb,
+			);
 		};
 
 		if (this._lastOp.angle === 0) {
-			fn();
+			finish();
 			return;
 		}
 
-		this._panels[this._lastOp.anchor][0]?.addEventListener(TRANSITION_END, fn, false);
+		const panel = this._panels[this._lastOp.anchor][0];
+		if (panel) {
+			this._afterTask(this._waitForTransitionEnd(panel), () => finish());
+		}
 		this._iterate(this._lastOp.anchor, (panel, i) => {
 			this._transformPanel(panel, 0, this._lastOp.anchor);
 			if (this._shading) {
@@ -1146,50 +1262,46 @@ class OriDomi {
 	private _unfold(callback?: () => void): void {
 		this._inTrans = true;
 		const { anchor } = this._lastOp;
-		this._iterate(anchor, (panel, i, len) => {
-			const delay = this._setPanelTrans(anchor, panel, i, len, this._config.speed, DELAY_FORWARD);
-
-			const deferTimer = this._trackedTimeout(() => {
-				this._pendingTimers.delete(deferTimer);
-				this._transformPanel(panel, 0, anchor);
-				if (this._shading) {
-					this._setShader(i, anchor, 0);
-				}
-
-				const innerTimer = this._trackedTimeout(
-					() => {
-						this._pendingTimers.delete(innerTimer);
-						showEl(panel.children[0] as HTMLElement);
-						if (i === len - 1) {
-							this._inTrans = this.isFoldedUp = false;
-							callback?.();
-							this._lastOp.fn = this.accordion as unknown as EffectFn;
-							this._lastOp.angle = 0;
-						}
-						const resetTimer = this._trackedTimeout(() => {
-							this._pendingTimers.delete(resetTimer);
-							panel.style.transitionDuration = `${this._config.speed}ms`;
-						}, 0);
-					},
-					delay + this._config.speed * 0.25,
+		const self = this;
+		this._currentOp = this._runTask(function* () {
+			const panels = self._panels[anchor];
+			const tasks = [];
+			for (let i = 0; i < panels.length; i++) {
+				const panel = panels[i]!;
+				const delay = self._setPanelTrans(
+					anchor,
+					panel,
+					i,
+					panels.length,
+					self._config.speed,
+					DELAY_FORWARD,
 				);
-			}, 0);
+
+				tasks.push(
+					yield* spawn(function* () {
+						yield* sleep(0);
+						self._transformPanel(panel, 0, anchor);
+						if (self._shading) {
+							self._setShader(i, anchor, 0);
+						}
+
+						yield* sleep(delay + self._config.speed * 0.25);
+						showEl(panel.children[0] as HTMLElement);
+
+						yield* sleep(0);
+						panel.style.transitionDuration = `${self._config.speed}ms`;
+					}),
+				);
+			}
+			// Wait for all panel animations to complete
+			for (const task of tasks) {
+				yield* task;
+			}
+			self._inTrans = self.isFoldedUp = false;
+			self._lastOp.fn = self.accordion as unknown as EffectFn;
+			self._lastOp.angle = 0;
+			callback?.();
 		});
-	}
-
-	/** Create a setTimeout that is tracked for cancellation via emptyQueue(). */
-	private _trackedTimeout(fn: () => void, ms: number): ReturnType<typeof setTimeout> {
-		const id = setTimeout(fn, ms);
-		this._pendingTimers.add(id);
-		return id;
-	}
-
-	/** Cancel all tracked timers. */
-	private _clearPendingTimers(): void {
-		for (const id of this._pendingTimers) {
-			clearTimeout(id);
-		}
-		this._pendingTimers.clear();
 	}
 
 	private _iterate(anchor: Anchor, fn: PanelIteratorFn): void {
@@ -1245,10 +1357,6 @@ class OriDomi {
 
 	destroy(callback?: () => void): null {
 		this.emptyQueue();
-		// Remove any pending transitionend listeners from all anchor panels
-		for (const anchor of anchorList) {
-			this._panels[anchor]?.[0]?.removeEventListener(TRANSITION_END, this._onTransitionEnd, false);
-		}
 		this.freeze(() => {
 			this._setTouch(false);
 			this.el.innerHTML = this._cloneEl.innerHTML;
@@ -1256,17 +1364,38 @@ class OriDomi {
 			if (this.el.parentNode) {
 				(this.el.parentNode as HTMLElement).style.transformStyle = this._origParentTransformStyle;
 			}
-			callback?.();
+			// Tear down the effection scope — cancels all pending operations
+			this._destroyScope().then(
+				() => {
+					callback?.();
+				},
+				(err) => {
+					this._handleTaskRejection(err);
+					callback?.();
+				},
+			);
 		});
 		return null;
 	}
 
 	emptyQueue(): this {
 		this._queue = [];
-		this._clearPendingTimers();
-		defer(() => {
-			this._inTrans = false;
-		});
+		// Cancel all current operation work without replacing the stable root scope.
+		if (this._currentOp) {
+			this._haltTask(this._currentOp);
+			this._currentOp = null;
+		}
+		for (const task of [...this._tasks]) {
+			this._haltTask(task);
+		}
+		this._afterTask(
+			this._runTask(function* () {
+				yield* sleep(0);
+			}),
+			() => {
+				this._inTrans = false;
+			},
+		);
 		return this;
 	}
 
@@ -1284,7 +1413,14 @@ class OriDomi {
 	wait(ms: number): this {
 		const fn = (): void => {
 			this._inTrans = true;
-			setTimeout(this._conclude, ms);
+			this._afterTask(
+				this._runTask(function* () {
+					yield* sleep(ms);
+				}),
+				() => {
+					this._conclude();
+				},
+			);
 		};
 		if (this._inTrans) {
 			this._queue.push([
@@ -1314,8 +1450,8 @@ class OriDomi {
 				content?: string | null,
 				style?: Record<string, string> | null,
 			): void => {
-				if (content) {
-					el.innerHTML = content;
+				if (content != null) {
+					el.textContent = content;
 				}
 				if (style) {
 					for (const [key, value] of Object.entries(style)) {
@@ -1441,35 +1577,52 @@ class OriDomi {
 	private _foldUpImpl(anchor: Anchor, options: EffectOptions): void {
 		const callback = options?.callback;
 		if (this.isFoldedUp) {
+			this._inTrans = false;
 			callback?.();
+			this._step();
 			return;
 		}
 		this._stageReset(anchor, () => {
 			this._inTrans = this.isFoldedUp = true;
+			const self = this;
+			const panels = this._panels[anchor];
 
-			this._iterate(anchor, (panel, i, len) => {
-				let duration = this._config.speed;
-				if (i === 0) {
-					duration /= 2;
-				}
-				const delay = this._setPanelTrans(anchor, panel, i, len, duration, DELAY_REVERSE);
+			this._currentOp = this._runTask(function* () {
+				const tasks = [];
+				for (let i = 0; i < panels.length; i++) {
+					const panel = panels[i]!;
+					let duration = self._config.speed;
+					if (i === 0) {
+						duration /= 2;
+					}
+					const delay = self._setPanelTrans(
+						anchor,
+						panel,
+						i,
+						panels.length,
+						duration,
+						DELAY_REVERSE,
+					);
 
-				const deferTimer = this._trackedTimeout(() => {
-					this._pendingTimers.delete(deferTimer);
-					this._transformPanel(panel, i === 0 ? 90 : 170, anchor);
-					const innerTimer = this._trackedTimeout(
-						() => {
-							this._pendingTimers.delete(innerTimer);
-							if (i === 0) {
-								this._inTrans = false;
-								callback?.();
-							} else {
+					tasks.push(
+						yield* spawn(function* () {
+							yield* sleep(0);
+							self._transformPanel(panel, i === 0 ? 90 : 170, anchor);
+
+							yield* sleep(delay + self._config.speed * 0.25);
+							if (i !== 0) {
 								hideEl(panel.children[0] as HTMLElement);
 							}
-						},
-						delay + this._config.speed * 0.25,
+						}),
 					);
-				}, 0);
+				}
+				// Wait for all panel animations to complete
+				for (const task of tasks) {
+					yield* task;
+				}
+				self._inTrans = false;
+				callback?.();
+				self._step();
 			});
 		});
 	}

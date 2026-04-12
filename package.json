@@ -6,6 +6,10 @@
 	"version": "2.0.0",
 	"license": "MIT",
 	"type": "module",
+	"sideEffects": false,
+	"engines": {
+		"node": ">=22"
+	},
 	"repository": {
 		"type": "git",
 		"url": "git://github.com/dmotz/oriDomi.git"
@@ -49,15 +53,18 @@
 	"scripts": {
 		"build": "tsup",
 		"dev": "tsup --watch",
-		"test": "vitest run && npx playwright test",
+		"test": "vitest run && playwright test",
 		"test:unit": "vitest run",
 		"test:unit:watch": "vitest",
-		"test:e2e": "npx playwright test",
-		"test:e2e:ui": "npx playwright test --ui",
-		"test:update-snapshots": "npx playwright test --update-snapshots",
+		"test:e2e": "playwright test",
+		"test:e2e:ui": "playwright test --ui",
+		"test:update-snapshots": "playwright test --update-snapshots",
 		"lint": "biome check .",
 		"lint:fix": "biome check --write .",
 		"format": "biome format --write .",
 		"prepublishOnly": "npm run build"
+	},
+	"dependencies": {
+		"effection": "^4.0.2"
 	}
 }
