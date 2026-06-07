@@ -6,7 +6,9 @@
 	"version": "2.0.0",
 	"license": "MIT",
 	"type": "module",
-	"sideEffects": false,
+	"sideEffects": [
+		"./dist/oridomi.css"
+	],
 	"engines": {
 		"node": ">=22"
 	},
@@ -21,6 +23,23 @@
 		".": {
 			"import": "./dist/oridomi.js",
 			"types": "./dist/oridomi.d.ts"
+		},
+		"./oridomi.css": "./dist/oridomi.css",
+		"./react": {
+			"import": "./dist/react.js",
+			"types": "./dist/react.d.ts"
+		},
+		"./vue": {
+			"import": "./dist/vue.js",
+			"types": "./dist/vue.d.ts"
+		},
+		"./svelte": {
+			"import": "./dist/svelte.js",
+			"types": "./dist/svelte.d.ts"
+		},
+		"./solid": {
+			"import": "./dist/solid.js",
+			"types": "./dist/solid.d.ts"
 		}
 	},
 	"files": [
@@ -41,24 +60,33 @@
 	"devDependencies": {
 		"@biomejs/biome": "2.4.11",
 		"@playwright/test": "^1.59.1",
+		"@types/react": "^19.2.17",
+		"@types/react-dom": "^19.2.3",
 		"happy-dom": "^20.8.9",
+		"react": "^19.2.7",
+		"react-dom": "^19.2.7",
 		"serve": "^14.2.6",
+		"solid-js": "^1.9.13",
+		"svelte": "^5.56.2",
 		"tsup": "^8.5.1",
 		"typescript": "^6.0.2",
-		"vitest": "^4.1.4"
+		"vitest": "^4.1.4",
+		"vue": "^3.5.35"
 	},
 	"bugs": {
 		"url": "https://github.com/dmotz/oriDomi/issues"
 	},
 	"scripts": {
-		"build": "tsup",
+		"build": "tsup && node scripts/write-css.mjs",
 		"dev": "tsup --watch",
-		"test": "vitest run && playwright test",
+		"typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
+		"test": "vitest run && npm run test:e2e",
 		"test:unit": "vitest run",
 		"test:unit:watch": "vitest",
+		"pretest:e2e": "npm run build",
 		"test:e2e": "playwright test",
-		"test:e2e:ui": "playwright test --ui",
-		"test:update-snapshots": "playwright test --update-snapshots",
+		"test:e2e:ui": "npm run test:e2e -- --ui",
+		"test:update-snapshots": "npm run test:e2e -- --update-snapshots",
 		"lint": "biome check .",
 		"lint:fix": "biome check --write .",
 		"format": "biome format --write .",
@@ -66,5 +94,29 @@
 	},
 	"dependencies": {
 		"effection": "^4.0.2"
+	},
+	"peerDependencies": {
+		"react": ">=18",
+		"react-dom": ">=18",
+		"solid-js": ">=1",
+		"svelte": ">=4",
+		"vue": ">=3"
+	},
+	"peerDependenciesMeta": {
+		"react": {
+			"optional": true
+		},
+		"react-dom": {
+			"optional": true
+		},
+		"solid-js": {
+			"optional": true
+		},
+		"svelte": {
+			"optional": true
+		},
+		"vue": {
+			"optional": true
+		}
 	}
 }

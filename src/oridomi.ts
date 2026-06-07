@@ -9,12 +9,14 @@
 
 import {
 	createScope,
+	ensure,
 	type Operation,
 	once,
 	race,
 	type Scope,
 	sleep,
 	spawn,
+	suspend,
 	type Task,
 } from "effection";
 
@@ -40,6 +42,25 @@ const GRADIENT_FN = "linear-gradient";
 const CURSOR_GRAB = "grab";
 const CURSOR_GRABBING = "grabbing";
 const TRANSITION_END = "transitionend";
+const PRESERVE_3D = "preserve-3d";
+const HIDDEN_TRANSLATE = "-99999px";
+const ORIDOMI_STYLE_MARKER = "data-oridomi";
+const ORIDOMI_STYLE_SELECTOR = `style[${ORIDOMI_STYLE_MARKER}]`;
+
+type Anchor = "left" | "right" | "top" | "bottom";
+export type AnchorShorthand =
+	| "left"
+	| "l"
+	| "4"
+	| "right"
+	| "r"
+	| "2"
+	| "top"
+	| "t"
+	| "1"
+	| "bottom"
+	| "b"
+	| "3";
 
 // Anchor lists and their axis pairs.
 const anchorList: Anchor[] = ["left", "right", "top", "bottom"];
@@ -68,7 +89,7 @@ const shaderClassKeys: Record<Anchor, ElClassKey> = {
 	bottom: "shaderBottom",
 };
 
-const _anchorShorthands: Record<string, Anchor> = {
+const _anchorShorthands: Record<AnchorShorthand, Anchor> = {
 	left: "left",
 	l: "left",
 	"4": "left",
@@ -138,7 +159,6 @@ for (const [k, v] of Object.entries(elClassValues) as [ElClassKey, string][]) {
 
 // Types
 
-type Anchor = "left" | "right" | "top" | "bottom";
 type ShadingMode = "hard" | "soft" | false;
 
 interface EffectOptions {
@@ -166,6 +186,9 @@ export interface OriDomiInputOptions {
 	touchStartCallback: (coord: number, e: Event) => void;
 	touchMoveCallback: (angle: number, e: Event) => void;
 	touchEndCallback: (coord: number, e: Event) => void;
+	responsive?: boolean;
+	injectStyles?: boolean;
+	nonce?: string;
 }
 
 export interface OriDomiOptions {
@@ -185,6 +208,9 @@ export interface OriDomiOptions {
 	touchStartCallback: (coord: number, e: Event) => void;
 	touchMoveCallback: (angle: number, e: Event) => void;
 	touchEndCallback: (coord: number, e: Event) => void;
+	responsive: boolean;
+	injectStyles: boolean;
+	nonce?: string;
 }
 
 interface LastOperation {
@@ -204,16 +230,20 @@ type PanelIteratorFn = (panel: HTMLDivElement, i: number, len: number) => void;
 interface EffectMethod {
 	(angle?: number, options?: EffectOptions): OriDomi;
 	(angle?: number, callback?: EffectOptions["callback"]): OriDomi;
-	(angle?: number, anchor?: Anchor | string, options?: EffectOptions): OriDomi;
-	(angle?: number, anchor?: Anchor | string, callback?: EffectOptions["callback"]): OriDomi;
+	(angle?: number, anchor?: Anchor | AnchorShorthand, options?: EffectOptions): OriDomi;
+	(
+		angle?: number,
+		anchor?: Anchor | AnchorShorthand,
+		callback?: EffectOptions["callback"],
+	): OriDomi;
 }
 
 /** Public API type for foldUp/unfold (no angle parameter). */
 interface FoldMethod {
 	(options?: EffectOptions): OriDomi;
 	(callback?: EffectOptions["callback"]): OriDomi;
-	(anchor?: Anchor | string, options?: EffectOptions): OriDomi;
-	(anchor?: Anchor | string, callback?: EffectOptions["callback"]): OriDomi;
+	(anchor?: Anchor | AnchorShorthand, options?: EffectOptions): OriDomi;
+	(anchor?: Anchor | AnchorShorthand, callback?: EffectOptions["callback"]): OriDomi;
 }
 
 // Style Generation
@@ -245,28 +275,37 @@ function cloneEl(parent: HTMLElement, deep: boolean, className: ElClassKey): HTM
 }
 
 function hideEl(el: HTMLElement): void {
-	el.style.transform = "translate3d(-99999px, 0, 0)";
+	el.style.transform = `translate3d(${HIDDEN_TRANSLATE}, 0, 0)`;
 }
 
 function showEl(el: HTMLElement): void {
 	el.style.transform = "translate3d(0, 0, 0)";
 }
 
-// Check for preserve-3d support.
-let isSupported = true;
-{
-	const p3d = "preserve-3d";
-	const testEl = document.createElement("div");
-	testEl.style.transformStyle = p3d;
-	if (testEl.style.transformStyle !== p3d) {
-		console?.warn(`${libName}: Missing support for \`${p3d}\`.`);
-		isSupported = false;
+function clearOriDomiHiddenTransform(el: HTMLElement): void {
+	if (el.style.transform.includes(HIDDEN_TRANSLATE)) {
+		el.style.transform = "";
 	}
 }
 
-// Generate the stylesheet if supported.
-if (isSupported) {
-	const p3d = "preserve-3d";
+// Lazy initialization
+
+let isSupported = false;
+let hasInitialized = false;
+let stylesGenerated = false;
+
+function detectPreserve3dSupport(): boolean {
+	const testEl = document.createElement("div");
+	testEl.style.transformStyle = PRESERVE_3D;
+	return testEl.style.transformStyle === PRESERVE_3D;
+}
+
+function generateStylesheet(): void {
+	if (stylesGenerated) {
+		return;
+	}
+
+	const p3d = PRESERVE_3D;
 	const i = (s: string): string => `${s} !important`;
 
 	addStyle(elClasses.active, {
@@ -364,10 +403,64 @@ if (isSupported) {
 	addStyle(`${elClasses.stageRight} .${elClasses.panel}`, { transformOrigin: "right" });
 	addStyle(`${elClasses.stageBottom} .${elClasses.panel}`, { transformOrigin: "bottom" });
 
+	stylesGenerated = true;
+}
+
+export function getStyleSheet(): string {
+	generateStylesheet();
+	return styleBuffer;
+}
+
+function injectStylesheet(nonce?: string): void {
+	const head = document.head;
+	if (!head) {
+		return;
+	}
+
+	const existingStyleEl = head.querySelector<HTMLStyleElement>(ORIDOMI_STYLE_SELECTOR);
+	if (existingStyleEl) {
+		if (nonce) {
+			existingStyleEl.nonce = nonce;
+			existingStyleEl.setAttribute("nonce", nonce);
+		}
+		return;
+	}
+
 	const styleEl = document.createElement("style");
 	styleEl.type = "text/css";
+	styleEl.setAttribute(ORIDOMI_STYLE_MARKER, "");
+	if (nonce) {
+		styleEl.nonce = nonce;
+		styleEl.setAttribute("nonce", nonce);
+	}
 	styleEl.appendChild(document.createTextNode(styleBuffer));
-	document.head.appendChild(styleEl);
+	head.appendChild(styleEl);
+}
+
+function ensureInitialized(nonce?: string, injectStyles = true): boolean {
+	if (typeof document === "undefined") {
+		isSupported = false;
+		return false;
+	}
+
+	if (!hasInitialized) {
+		isSupported = detectPreserve3dSupport();
+		hasInitialized = true;
+	}
+
+	if (!isSupported) {
+		return false;
+	}
+
+	if (injectStyles) {
+		generateStylesheet();
+		injectStylesheet(nonce);
+	}
+	return true;
+}
+
+function warnUnsupported(): void {
+	console?.warn(`${libName}: Missing support for \`${PRESERVE_3D}\`.`);
 }
 
 // Defaults
@@ -389,16 +482,21 @@ const defaults: OriDomiOptions = {
 	touchStartCallback: noOp,
 	touchMoveCallback: noOp,
 	touchEndCallback: noOp,
+	responsive: false,
+	injectStyles: true,
 };
 
 /** Internal interface exposing members needed by the prep() decorator. */
 interface OriDomiInternal {
+	_inert: boolean;
+	_destroyed: boolean;
 	_touchStarted: boolean;
 	_lastOp: LastOperation;
 	_queue: QueueEntry[];
 	_normalizeAngle(angle: number): number;
 	_getLonghandAnchor(shorthand: unknown): Anchor;
 	_step(): void;
+	_flushSettled(): void;
 }
 
 // The `prep` decorator normalizes arguments for effect methods, manages the
@@ -406,6 +504,10 @@ interface OriDomiInternal {
 function prep(fn: EffectFn): (this: OriDomi, ...args: unknown[]) => OriDomi {
 	return function (this: OriDomi, ...args: unknown[]): OriDomi {
 		const self = this as unknown as OriDomiInternal;
+		if (self._inert || self._destroyed) {
+			self._flushSettled();
+			return this;
+		}
 		if (self._touchStarted) {
 			fn.apply(this, args);
 			return this;
@@ -469,7 +571,10 @@ function prep(fn: EffectFn): (this: OriDomi, ...args: unknown[]) => OriDomi {
 
 class OriDomi {
 	static VERSION = "2.0.0";
-	static isSupported = isSupported;
+
+	static get isSupported(): boolean {
+		return ensureInitialized(undefined, false);
+	}
 
 	el!: HTMLElement;
 
@@ -480,14 +585,14 @@ class OriDomi {
 	// Internal config
 	private readonly _config: OriDomiOptions = { ...defaults };
 	private _queue: QueueEntry[] = [];
-	private readonly _panels: Record<Anchor, HTMLDivElement[]> = {
+	private _panels: Record<Anchor, HTMLDivElement[]> = {
 		left: [],
 		right: [],
 		top: [],
 		bottom: [],
 	};
-	private readonly _stages: Record<Anchor, HTMLDivElement> = {} as Record<Anchor, HTMLDivElement>;
-	private readonly _shaders: Record<Anchor, Record<Anchor, HTMLDivElement[]>> = {} as Record<
+	private _stages: Record<Anchor, HTMLDivElement> = {} as Record<Anchor, HTMLDivElement>;
+	private _shaders: Record<Anchor, Record<Anchor, HTMLDivElement[]>> = {} as Record<
 		Anchor,
 		Record<Anchor, HTMLDivElement[]>
 	>;
@@ -497,14 +602,23 @@ class OriDomi {
 	private _touchEnabled = false;
 	private _touchStarted = false;
 	private _touchAxis: "x" | "y" = "x";
-	private readonly _stageHolder!: HTMLDivElement;
-	private readonly _cloneEl!: HTMLDivElement;
+	private _stageHolder!: HTMLDivElement;
+	private _cloneEl!: HTMLDivElement;
+	private readonly _inert: boolean = false;
+	private readonly _settledResolvers: Array<() => void> = [];
+	private _destroying = false;
+	private _destroyed = false;
+	private _resizeObserver: ResizeObserver | null = null;
+	private _resizeTask: Task<void> | null = null;
 
 	// Effection structured concurrency scope — replaces manual timer tracking
 	private readonly _scope!: Scope;
 	private readonly _destroyScope!: () => Promise<void>;
+	// Child scope owning in-flight operation tasks. emptyQueue() tears it down and
+	// recreates it to cancel all operation work at once; the root _scope outlives it.
+	private _opScope!: Scope;
+	private _destroyOpScope!: () => Promise<void>;
 	private _currentOp: Task<void> | null = null;
-	private readonly _tasks = new Set<Task<unknown>>();
 
 	// Touch tracking state
 	private _xLast = 0;
@@ -516,8 +630,11 @@ class OriDomi {
 	constructor(el: string | HTMLElement, options: Partial<OriDomiInputOptions> = {}) {
 		// Initialize effection scope early so methods don't crash on partial construction
 		[this._scope, this._destroyScope] = createScope();
+		[this._opScope, this._destroyOpScope] = createScope(this._scope);
 
-		if (!isSupported) {
+		if (!ensureInitialized(options.nonce, options.injectStyles ?? defaults.injectStyles)) {
+			this._inert = true;
+			warnUnsupported();
 			return;
 		}
 
@@ -529,6 +646,8 @@ class OriDomi {
 
 		if (!this.el?.nodeType || this.el.nodeType !== 1) {
 			console?.warn(`${libName}: First argument must be a DOM element`);
+			this._inert = true;
+			this._flushSettled();
 			return;
 		}
 
@@ -539,29 +658,70 @@ class OriDomi {
 		this._config = { ...defaults, ...restOptions, shading: resolvedShading } as OriDomiOptions;
 
 		this._config.ripple = Number(this._config.ripple);
+		this._shading = resolvedShading;
+		this._origParentTransformStyle = (this.el.parentNode as HTMLElement).style.transformStyle;
+		this._buildStructure(this.el, this._config.touchEnabled);
+		this._setupResizeObserver();
+		this._registerScopeCleanups();
+	}
+
+	// Internal Methods (arrow function class fields for bound methods)
+
+	private _createSourceShell(content?: string | HTMLElement): HTMLElement {
+		const source = (this._cloneEl || this.el).cloneNode(false) as HTMLElement;
+		source.classList.remove(elClasses.active, elClasses.clone, elClasses.content);
+		clearOriDomiHiddenTransform(source);
+		source.innerHTML = "";
+		if (typeof content === "string") {
+			source.innerHTML = content;
+		} else if (content) {
+			source.appendChild(content.cloneNode(true));
+		}
+		return source;
+	}
+
+	private _cloneSource(sourceEl: HTMLElement, className: ElClassKey): HTMLDivElement {
+		const source = cloneEl(sourceEl, true, className);
+		source.classList.remove(elClasses.active);
+		if (className === "content") {
+			source.classList.remove(elClasses.clone);
+			clearOriDomiHiddenTransform(source);
+		} else if (className === "clone") {
+			source.classList.remove(elClasses.content);
+		}
+		return source;
+	}
+
+	private _applyTransitionStyle(el: HTMLElement): void {
+		el.style.transitionDuration = `${this._config.speed}ms`;
+		el.style.transitionTimingFunction = this._config.easingMethod;
+	}
+
+	private _resetStructureState(): void {
 		this._queue = [];
 		this._panels = { left: [], right: [], top: [], bottom: [] };
 		this._stages = {} as Record<Anchor, HTMLDivElement>;
 		this._lastOp = { anchor: anchorList[0]! };
-		this._shading = resolvedShading;
-
-		let shaderProtos: Record<string, HTMLDivElement> = {};
+		this.isFrozen = false;
+		this.isFoldedUp = false;
+		this._touchStarted = false;
+		this._touchEnabled = false;
 		if (this._shading) {
 			this._shaders = { left: {}, right: {}, top: {}, bottom: {} } as Record<
 				Anchor,
 				Record<Anchor, HTMLDivElement[]>
 			>;
-			shaderProtos = {};
+		} else {
+			this._shaders = {} as Record<Anchor, Record<Anchor, HTMLDivElement[]>>;
 		}
+	}
 
+	private _buildStructure(sourceEl: HTMLElement, enableTouch: boolean): void {
+		this._resetStructureState();
+
+		const shaderProtos: Record<string, HTMLDivElement> = {};
 		const stageProto = createEl("stage");
 		stageProto.style.perspective = `${this._config.perspective}px`;
-
-		/** Apply transition duration and easing to an element. */
-		const applyTransitionStyle = (el: HTMLElement): void => {
-			el.style.transitionDuration = `${this._config.speed}ms`;
-			el.style.transitionTimingFunction = this._config.easingMethod;
-		};
 
 		for (const anchor of anchorList) {
 			this._panels[anchor] = [];
@@ -573,18 +733,18 @@ class OriDomi {
 					this._shaders[anchor][side] = [];
 				}
 				const shaderProto = createEl("shader");
-				applyTransitionStyle(shaderProto);
+				this._applyTransitionStyle(shaderProto);
 				shaderProtos[anchor] = cloneEl(shaderProto, false, shaderClassKeys[anchor]);
 			}
 		}
 
-		const contentHolder = cloneEl(this.el, true, "content");
+		const contentHolder = this._cloneSource(sourceEl, "content");
 
 		const maskProto = createEl("mask");
 		maskProto.appendChild(contentHolder);
 
 		const panelProto = createEl("panel");
-		applyTransitionStyle(panelProto);
+		this._applyTransitionStyle(panelProto);
 
 		const offsets: Record<string, number[]> = { left: [], top: [] };
 
@@ -716,25 +876,68 @@ class OriDomi {
 
 		this.el.classList.add(elClasses.active);
 		showEl(this._stages.left);
-		this._cloneEl = cloneEl(this.el, true, "clone");
-		this._cloneEl.classList.remove(elClasses.active);
+		this._cloneEl = this._cloneSource(sourceEl, "clone");
 		hideEl(this._cloneEl);
 		this.el.innerHTML = "";
 		this.el.appendChild(this._cloneEl);
 		this.el.appendChild(this._stageHolder);
-		this._origParentTransformStyle = (this.el.parentNode as HTMLElement).style.transformStyle;
-		(this.el.parentNode as HTMLElement).style.transformStyle = "preserve-3d";
+		if (this.el.parentNode) {
+			(this.el.parentNode as HTMLElement).style.transformStyle = "preserve-3d";
+		}
 
 		this.accordion(0);
 		if (this._config.ripple) {
 			this.setRipple(this._config.ripple as number);
 		}
-		if (this._config.touchEnabled) {
+		if (enableTouch) {
 			this.enableTouch();
 		}
 	}
 
-	// Internal Methods (arrow function class fields for bound methods)
+	private _rebuildFromSource(sourceEl: HTMLElement, enableTouch = this._touchEnabled): void {
+		this._setTouch(false);
+		this.emptyQueue();
+		this._queue = [];
+		this._inTrans = false;
+		const snapshot = sourceEl.cloneNode(true) as HTMLElement;
+		this._buildStructure(snapshot, enableTouch);
+	}
+
+	private _setupResizeObserver(): void {
+		if (this._inert || !this._config.responsive || typeof ResizeObserver === "undefined") {
+			return;
+		}
+		this._disconnectResizeObserver();
+		this._resizeObserver = new ResizeObserver(() => {
+			if (this._inert || this._destroying) {
+				return;
+			}
+			if (this._resizeTask) {
+				this._haltTask(this._resizeTask);
+				this._resizeTask = null;
+			}
+			const self = this;
+			// Runs on the root scope so emptyQueue() (which tears down the operation
+			// scope) does not cancel a pending responsive refresh.
+			this._resizeTask = this._trackTask(
+				this._scope.run(function* () {
+					yield* sleep(50);
+					self.refresh();
+					self._resizeTask = null;
+				}),
+			);
+		});
+		this._resizeObserver.observe(this.el);
+	}
+
+	private _disconnectResizeObserver(): void {
+		this._resizeObserver?.disconnect();
+		this._resizeObserver = null;
+		if (this._resizeTask) {
+			this._haltTask(this._resizeTask);
+			this._resizeTask = null;
+		}
+	}
 
 	private _isNormalCancellation(err: unknown): boolean {
 		return err instanceof Error && err.message === "halted";
@@ -747,16 +950,13 @@ class OriDomi {
 	}
 
 	private _trackTask<T>(task: Task<T>): Task<T> {
-		this._tasks.add(task as Task<unknown>);
 		task.then(
 			() => {
-				this._tasks.delete(task as Task<unknown>);
 				if (this._currentOp === task) {
 					this._currentOp = null;
 				}
 			},
 			(err) => {
-				this._tasks.delete(task as Task<unknown>);
 				if (this._currentOp === task) {
 					this._currentOp = null;
 				}
@@ -767,7 +967,62 @@ class OriDomi {
 	}
 
 	private _runTask<T>(operation: () => Operation<T>): Task<T> {
-		return this._trackTask(this._scope.run(operation));
+		return this._trackTask(this._opScope.run(operation));
+	}
+
+	/**
+	 * Register a cleanup that runs when the root scope is torn down (destroy()).
+	 * The task suspends until the scope closes, then `ensure` runs the cleanup —
+	 * a declarative teardown registered alongside setup, backing up the explicit
+	 * dispose paths.
+	 */
+	private _addCleanup(cleanup: () => void): void {
+		void this._scope.run(function* () {
+			yield* ensure(() => {
+				cleanup();
+			});
+			yield* suspend();
+		});
+	}
+
+	private _registerScopeCleanups(): void {
+		this._addCleanup(() => {
+			this._resizeObserver?.disconnect();
+			this._resizeObserver = null;
+		});
+		this._addCleanup(() => {
+			this._setTouch(false);
+		});
+	}
+
+	private _isIdle(): boolean {
+		return (
+			this._inert ||
+			this._destroyed ||
+			(!this._destroying && !this._inTrans && this._queue.length === 0)
+		);
+	}
+
+	private _flushSettled(): void {
+		if (!this._isIdle() || this._settledResolvers.length === 0) {
+			return;
+		}
+
+		const resolvers = this._settledResolvers.splice(0);
+		for (const resolve of resolvers) {
+			resolve();
+		}
+	}
+
+	whenSettled(): Promise<this> {
+		if (this._isIdle()) {
+			return Promise.resolve(this);
+		}
+
+		return new Promise((resolve) => {
+			this._settledResolvers.push(() => resolve(this));
+			this._flushSettled();
+		});
 	}
 
 	private _afterTask<T>(task: Task<T>, cb: (value: T) => void): void {
@@ -787,7 +1042,15 @@ class OriDomi {
 	}
 
 	private readonly _step = (): void => {
-		if (this._inTrans || !this._queue.length) {
+		if (this._inert) {
+			this._flushSettled();
+			return;
+		}
+		if (this._inTrans) {
+			return;
+		}
+		if (!this._queue.length) {
+			this._flushSettled();
 			return;
 		}
 		this._inTrans = true;
@@ -807,6 +1070,7 @@ class OriDomi {
 					options.callback?.();
 				} finally {
 					this._step();
+					this._flushSettled();
 				}
 			};
 			const args:
@@ -823,6 +1087,7 @@ class OriDomi {
 			} catch (err) {
 				this._inTrans = false;
 				console?.warn(`${libName}: Effect execution failed`, err);
+				this._flushSettled();
 			}
 		};
 
@@ -879,8 +1144,15 @@ class OriDomi {
 		if (this._lastOp.fn !== op.fn) {
 			return false;
 		}
-		for (const [k, v] of Object.entries(op.options)) {
-			if (k !== "callback" && v !== this._lastOp.options?.[k as keyof EffectOptions]) {
+		const optionKeys = new Set([
+			...Object.keys(op.options),
+			...Object.keys(this._lastOp.options ?? {}),
+		]);
+		for (const k of optionKeys) {
+			if (
+				k !== "callback" &&
+				op.options[k as keyof EffectOptions] !== this._lastOp.options?.[k as keyof EffectOptions]
+			) {
 				return false;
 			}
 		}
@@ -917,8 +1189,12 @@ class OriDomi {
 			}),
 			() => {
 				this._inTrans = false;
-				this._step();
-				cb?.(event, this);
+				try {
+					cb?.(event, this);
+				} finally {
+					this._step();
+					this._flushSettled();
+				}
 			},
 		);
 	};
@@ -1086,7 +1362,10 @@ class OriDomi {
 	};
 
 	_getLonghandAnchor(shorthand: unknown): Anchor {
-		return _anchorShorthands[String(shorthand)] ?? "left";
+		const key = String(shorthand);
+		return Object.prototype.hasOwnProperty.call(_anchorShorthands, key)
+			? _anchorShorthands[key as AnchorShorthand]
+			: "left";
 	}
 
 	private _setCursor(bool: boolean = this._touchEnabled): void {
@@ -1108,6 +1387,9 @@ class OriDomi {
 	}
 
 	private _setTouch(toggle: boolean): this {
+		if (this._inert) {
+			return this;
+		}
 		if (toggle) {
 			if (this._touchEnabled) {
 				return this;
@@ -1264,43 +1546,53 @@ class OriDomi {
 		const { anchor } = this._lastOp;
 		const self = this;
 		this._currentOp = this._runTask(function* () {
-			const panels = self._panels[anchor];
-			const tasks = [];
-			for (let i = 0; i < panels.length; i++) {
-				const panel = panels[i]!;
-				const delay = self._setPanelTrans(
-					anchor,
-					panel,
-					i,
-					panels.length,
-					self._config.speed,
-					DELAY_FORWARD,
-				);
+			let completedWork = false;
+			try {
+				const panels = self._panels[anchor];
+				const tasks = [];
+				for (let i = 0; i < panels.length; i++) {
+					const panel = panels[i]!;
+					const delay = self._setPanelTrans(
+						anchor,
+						panel,
+						i,
+						panels.length,
+						self._config.speed,
+						DELAY_FORWARD,
+					);
 
-				tasks.push(
-					yield* spawn(function* () {
-						yield* sleep(0);
-						self._transformPanel(panel, 0, anchor);
-						if (self._shading) {
-							self._setShader(i, anchor, 0);
-						}
+					tasks.push(
+						yield* spawn(function* () {
+							yield* sleep(0);
+							self._transformPanel(panel, 0, anchor);
+							if (self._shading) {
+								self._setShader(i, anchor, 0);
+							}
 
-						yield* sleep(delay + self._config.speed * 0.25);
-						showEl(panel.children[0] as HTMLElement);
+							yield* sleep(delay + self._config.speed * 0.25);
+							showEl(panel.children[0] as HTMLElement);
 
-						yield* sleep(0);
-						panel.style.transitionDuration = `${self._config.speed}ms`;
-					}),
-				);
+							yield* sleep(0);
+							panel.style.transitionDuration = `${self._config.speed}ms`;
+						}),
+					);
+				}
+				// Wait for all panel animations to complete
+				for (const task of tasks) {
+					yield* task;
+				}
+				self._inTrans = self.isFoldedUp = false;
+				self._lastOp.fn = self.accordion as unknown as EffectFn;
+				self._lastOp.angle = 0;
+				completedWork = true;
+				callback?.();
+			} finally {
+				self._inTrans = false;
+				if (!completedWork) {
+					self._step();
+				}
+				self._flushSettled();
 			}
-			// Wait for all panel animations to complete
-			for (const task of tasks) {
-				yield* task;
-			}
-			self._inTrans = self.isFoldedUp = false;
-			self._lastOp.fn = self.accordion as unknown as EffectFn;
-			self._lastOp.angle = 0;
-			callback?.();
 		});
 	}
 
@@ -1322,6 +1614,9 @@ class OriDomi {
 	}
 
 	setSpeed(speed: number): this {
+		if (this._inert) {
+			return this;
+		}
 		this._config.speed = speed;
 		for (const anchor of anchorList) {
 			this._setTrans(speed, this._config.ripple as number, anchor);
@@ -1330,6 +1625,11 @@ class OriDomi {
 	}
 
 	freeze(callback?: () => void): this {
+		if (this._inert) {
+			callback?.();
+			this._flushSettled();
+			return this;
+		}
 		if (this.isFrozen) {
 			callback?.();
 		} else {
@@ -1345,6 +1645,9 @@ class OriDomi {
 	}
 
 	unfreeze(): this {
+		if (this._inert) {
+			return this;
+		}
 		if (this.isFrozen) {
 			this.isFrozen = false;
 			hideEl(this._cloneEl);
@@ -1355,62 +1658,140 @@ class OriDomi {
 		return this;
 	}
 
-	destroy(callback?: () => void): null {
-		this.emptyQueue();
-		this.freeze(() => {
-			this._setTouch(false);
-			this.el.innerHTML = this._cloneEl.innerHTML;
-			this.el.classList.remove(elClasses.active);
-			if (this.el.parentNode) {
-				(this.el.parentNode as HTMLElement).style.transformStyle = this._origParentTransformStyle;
+	/**
+	 * Replace the snapshotted source content and rebuild panels.
+	 * Rebuilds reset the fold state to a flat accordion(0) layout.
+	 */
+	setContent(content: string | HTMLElement): this {
+		if (this._inert) {
+			return this;
+		}
+		const source = this._createSourceShell(content);
+		this._rebuildFromSource(source);
+		return this;
+	}
+
+	/**
+	 * Re-snapshot the hidden source clone and rebuild panels.
+	 * Rebuilds reset the fold state to a flat accordion(0) layout.
+	 */
+	refresh(): this {
+		if (this._inert) {
+			return this;
+		}
+		this._rebuildFromSource(this._cloneEl);
+		return this;
+	}
+
+	destroy(callback?: () => void): Promise<void> {
+		if (this._destroyed || this._destroying) {
+			return Promise.resolve();
+		}
+		if (this._inert) {
+			this._queue = [];
+			this._inTrans = false;
+			this._flushSettled();
+			try {
+				callback?.();
+			} catch (err) {
+				this._handleTaskRejection(err);
 			}
-			// Tear down the effection scope — cancels all pending operations
-			this._destroyScope().then(
-				() => {
-					callback?.();
-				},
-				(err) => {
-					this._handleTaskRejection(err);
-					callback?.();
-				},
-			);
+			this._destroyed = true;
+			return Promise.resolve();
+		}
+		this._destroying = true;
+		this._disconnectResizeObserver();
+		this.emptyQueue();
+
+		return new Promise((resolve) => {
+			this.freeze(() => {
+				this._setTouch(false);
+				this.el.innerHTML = this._cloneEl.innerHTML;
+				this.el.classList.remove(elClasses.active);
+				if (this.el.parentNode) {
+					(this.el.parentNode as HTMLElement).style.transformStyle = this._origParentTransformStyle;
+				}
+				this._destroyScope().then(
+					() => {
+						try {
+							callback?.();
+						} catch (err) {
+							this._handleTaskRejection(err);
+						} finally {
+							this._destroyed = true;
+							this._destroying = false;
+							this._inTrans = false;
+							this._flushSettled();
+							resolve();
+						}
+					},
+					(err) => {
+						this._handleTaskRejection(err);
+						try {
+							callback?.();
+						} catch (callbackErr) {
+							this._handleTaskRejection(callbackErr);
+						} finally {
+							this._destroyed = true;
+							this._destroying = false;
+							this._inTrans = false;
+							this._flushSettled();
+							resolve();
+						}
+					},
+				);
+			});
 		});
-		return null;
 	}
 
 	emptyQueue(): this {
 		this._queue = [];
-		// Cancel all current operation work without replacing the stable root scope.
-		if (this._currentOp) {
-			this._haltTask(this._currentOp);
-			this._currentOp = null;
+		if (this._inert || this._destroyed) {
+			this._inTrans = false;
+			this._flushSettled();
+			return this;
 		}
-		for (const task of [...this._tasks]) {
-			this._haltTask(task);
-		}
+		// Cancel all in-flight operation work by tearing down the child operation
+		// scope, then recreate it for subsequent operations. The resize task lives
+		// on the root scope and is intentionally preserved.
+		this._currentOp = null;
+		this._destroyOpScope().catch((err) => {
+			this._handleTaskRejection(err);
+		});
+		[this._opScope, this._destroyOpScope] = createScope(this._scope);
 		this._afterTask(
 			this._runTask(function* () {
 				yield* sleep(0);
 			}),
 			() => {
 				this._inTrans = false;
+				this._flushSettled();
 			},
 		);
 		return this;
 	}
-
 	setRipple(dir: number | boolean = 1): this {
+		if (this._inert) {
+			return this;
+		}
 		this._config.ripple = Number(dir);
 		this.setSpeed(this._config.speed);
 		return this;
 	}
 
 	constrainAngle(angle: number): this {
+		if (this._inert) {
+			return this;
+		}
 		this._config.maxAngle = parseFloat(String(angle)) || defaults.maxAngle;
 		return this;
 	}
 
 	wait(ms: number): this {
+		if (this._inert) {
+			this._flushSettled();
+			return this;
+		}
 		const fn = (): void => {
 			this._inTrans = true;
 			this._afterTask(
@@ -1440,6 +1821,9 @@ class OriDomi {
 			| ((el: HTMLElement, i: number, anchor: Anchor) => void)
 			| Record<string, string | { content?: string; style?: Record<string, string> }>,
 	): this {
+		if (this._inert) {
+			return this;
+		}
 		let iteratorFn: (el: HTMLElement, i: number, anchor: Anchor) => void;
 
 		if (typeof fn !== "function") {
@@ -1580,49 +1964,61 @@ class OriDomi {
 			this._inTrans = false;
 			callback?.();
 			this._step();
+			this._flushSettled();
 			return;
 		}
 		this._stageReset(anchor, () => {
-			this._inTrans = this.isFoldedUp = true;
+			this._inTrans = true;
 			const self = this;
 			const panels = this._panels[anchor];
 
 			this._currentOp = this._runTask(function* () {
-				const tasks = [];
-				for (let i = 0; i < panels.length; i++) {
-					const panel = panels[i]!;
-					let duration = self._config.speed;
-					if (i === 0) {
-						duration /= 2;
+				let completedWork = false;
+				try {
+					const tasks = [];
+					for (let i = 0; i < panels.length; i++) {
+						const panel = panels[i]!;
+						let duration = self._config.speed;
+						if (i === 0) {
+							duration /= 2;
+						}
+						const delay = self._setPanelTrans(
+							anchor,
+							panel,
+							i,
+							panels.length,
+							duration,
+							DELAY_REVERSE,
+						);
+
+						tasks.push(
+							yield* spawn(function* () {
+								yield* sleep(0);
+								self._transformPanel(panel, i === 0 ? 90 : 170, anchor);
+
+								yield* sleep(delay + self._config.speed * 0.25);
+								if (i !== 0) {
+									hideEl(panel.children[0] as HTMLElement);
+								}
+							}),
+						);
 					}
-					const delay = self._setPanelTrans(
-						anchor,
-						panel,
-						i,
-						panels.length,
-						duration,
-						DELAY_REVERSE,
-					);
-
-					tasks.push(
-						yield* spawn(function* () {
-							yield* sleep(0);
-							self._transformPanel(panel, i === 0 ? 90 : 170, anchor);
-
-							yield* sleep(delay + self._config.speed * 0.25);
-							if (i !== 0) {
-								hideEl(panel.children[0] as HTMLElement);
-							}
-						}),
-					);
+					// Wait for all panel animations to complete
+					for (const task of tasks) {
+						yield* task;
+					}
+					self.isFoldedUp = true;
+					self._inTrans = false;
+					completedWork = true;
+					callback?.();
+					self._step();
+				} finally {
+					self._inTrans = false;
+					if (!completedWork) {
+						self._step();
+					}
+					self._flushSettled();
 				}
-				// Wait for all panel animations to complete
-				for (const task of tasks) {
-					yield* task;
-				}
-				self._inTrans = false;
-				callback?.();
-				self._step();
 			});
 		});
 	}
@@ -1641,37 +2037,51 @@ class OriDomi {
 		return this.accordion(0, { callback }) as unknown as this;
 	}
 
-	reveal(angle?: number, anchor?: string, options: EffectOptions = {}): this {
-		options.sticky = true;
-		return this.accordion(angle, anchor, options) as unknown as this;
+	reveal(angle?: number, anchor?: Anchor | AnchorShorthand, options: EffectOptions = {}): this {
+		return this.accordion(angle, anchor, { ...options, sticky: true }) as unknown as this;
 	}
 
-	stairs(angle?: number, anchor?: string, options: EffectOptions = {}): this {
-		options.stairs = options.sticky = true;
-		return this.accordion(angle, anchor, options) as unknown as this;
+	stairs(angle?: number, anchor?: Anchor | AnchorShorthand, options: EffectOptions = {}): this {
+		return this.accordion(angle, anchor, {
+			...options,
+			stairs: true,
+			sticky: true,
+		}) as unknown as this;
 	}
 
-	fracture(angle?: number, anchor?: string, options: EffectOptions = {}): this {
-		options.fracture = true;
-		return this.accordion(angle, anchor, options) as unknown as this;
+	fracture(angle?: number, anchor?: Anchor | AnchorShorthand, options: EffectOptions = {}): this {
+		return this.accordion(angle, anchor, { ...options, fracture: true }) as unknown as this;
 	}
 
-	twist(angle?: number, anchor?: string, options: EffectOptions = {}): this {
-		options.fracture = options.twist = true;
-		return this.accordion((angle ?? 0) / 10, anchor, options) as unknown as this;
+	twist(angle?: number, anchor?: Anchor | AnchorShorthand, options: EffectOptions = {}): this {
+		return this.accordion((angle ?? 0) / 10, anchor, {
+			...options,
+			fracture: true,
+			twist: true,
+		}) as unknown as this;
 	}
 
-	collapse(anchor?: string, options: EffectOptions = {}): this {
-		options.sticky = false;
-		return this.accordion(-this._config.maxAngle, anchor, options) as unknown as this;
+	collapse(anchor?: Anchor | AnchorShorthand, options: EffectOptions = {}): this {
+		return this.accordion(-this._config.maxAngle, anchor, {
+			...options,
+			sticky: false,
+		}) as unknown as this;
 	}
 
-	collapseAlt(anchor?: string, options: EffectOptions = {}): this {
-		options.sticky = false;
-		return this.accordion(this._config.maxAngle, anchor, options) as unknown as this;
+	collapseAlt(anchor?: Anchor | AnchorShorthand, options: EffectOptions = {}): this {
+		return this.accordion(this._config.maxAngle, anchor, {
+			...options,
+			sticky: false,
+		}) as unknown as this;
 	}
 
 	map(fn: (angle: number, i: number, len: number) => number): EffectMethod {
+		if (this._inert) {
+			const noOpEffect = function (this: OriDomi): OriDomi {
+				return this;
+			};
+			return noOpEffect.bind(this) as unknown as EffectMethod;
+		}
 		const self = this;
 		const impl = function (
 			this: OriDomi,
