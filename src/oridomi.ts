@@ -5,7 +5,7 @@
 // [Demos / docs](https://oxism.com/oriDomi)
 // #### by [Dan Motzenbecker](https://oxism.com)
 
-// Copyright 2014, MIT License
+// Copyright 2014-2026, MIT License
 
 import {
 	createScope,

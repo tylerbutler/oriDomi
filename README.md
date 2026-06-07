@@ -19,7 +19,7 @@
 ## Installation
 
 ```bash
-npm install oridomi
+npm install @tylerbu/oridomi
 ```
 
 ## Usage
@@ -27,7 +27,7 @@ npm install oridomi
 ### ESM (recommended)
 
 ```js
-import OriDomi from 'oridomi';
+import OriDomi from '@tylerbu/oridomi';
 
 const el = document.querySelector('#my-element');
 const fold = new OriDomi(el, { speed: 500 });
@@ -36,12 +36,12 @@ fold.accordion(30);
 
 ### Server-side rendering (SSR) / frameworks
 
-`import OriDomi from 'oridomi'` is safe in Node and SSR bundles such as Next.js, Nuxt, SvelteKit and Astro. DOM feature detection and stylesheet injection are deferred until first construction, so create instances only in browser-side lifecycle hooks such as React `useEffect`, Vue `onMounted`, or Svelte `onMount`/actions. Call `destroy()` during cleanup.
+`import OriDomi from '@tylerbu/oridomi'` is safe in Node and SSR bundles such as Next.js, Nuxt, SvelteKit and Astro. DOM feature detection and stylesheet injection are deferred until first construction, so create instances only in browser-side lifecycle hooks such as React `useEffect`, Vue `onMounted`, or Svelte `onMount`/actions. Call `destroy()` during cleanup.
 
 `OriDomi.isSupported` is safe to read in any environment and returns `false` when there is no `document` or no `preserve-3d` support.
 
 ```js
-import OriDomi from 'oridomi';
+import OriDomi from '@tylerbu/oridomi';
 
 if (OriDomi.isSupported) {
   const fold = new OriDomi(document.querySelector('#my-element'));
@@ -53,7 +53,7 @@ if (OriDomi.isSupported) {
 For strict CSP setups, pass a `nonce` option, such as `{ nonce: cspNonce }`, for the injected `<style>`, or import the static stylesheet instead:
 
 ```js
-import 'oridomi/oridomi.css';
+import '@tylerbu/oridomi/oridomi.css';
 
 const fold = new OriDomi(el, { injectStyles: false });
 ```
@@ -85,7 +85,7 @@ await fold.destroy();
 For use without a bundler, include the IIFE build which exposes `window.OriDomi`:
 
 ```html
-<script src="https://unpkg.com/oridomi/dist/oridomi.iife.js"></script>
+<script src="https://unpkg.com/@tylerbu/oridomi/dist/oridomi.iife.js"></script>
 <script>
   const fold = new OriDomi(document.querySelector('#my-element'));
   fold.accordion(30);
@@ -223,7 +223,7 @@ Framework wrappers are available as subpath imports. They are SSR-safe: each wra
 
 ```tsx
 import { useRef } from 'react';
-import { useOriDomi } from 'oridomi/react';
+import { useOriDomi } from '@tylerbu/oridomi/react';
 
 export function FoldPanel() {
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -245,7 +245,7 @@ React also provides `OriDomiView`, a forward-ref component for wrapping content 
 ```vue
 <script setup>
 import { ref } from 'vue';
-import { useOriDomi, vOriDomi } from 'oridomi/vue';
+import { useOriDomi, vOriDomi } from '@tylerbu/oridomi/vue';
 
 defineOptions({
   directives: {
@@ -274,7 +274,7 @@ function accordion() {
 
 ```svelte
 <script>
-  import { oridomi } from 'oridomi/svelte';
+  import { oridomi } from '@tylerbu/oridomi/svelte';
 </script>
 
 <div use:oridomi={{ speed: 500 }}>Fold me</div>
@@ -283,7 +283,7 @@ function accordion() {
 ### Solid
 
 ```jsx
-import { createOriDomi } from 'oridomi/solid';
+import { createOriDomi } from '@tylerbu/oridomi/solid';
 
 export default function FoldPanel() {
   let el;
@@ -319,7 +319,7 @@ instance or call `refresh()` via the returned handle.
 
 v2 is a TypeScript, ESM-first rewrite of the original CoffeeScript library:
 
-- **ESM default export:** `import OriDomi from 'oridomi'` (plus a `window.OriDomi`
+- **ESM default export:** `import OriDomi from '@tylerbu/oridomi'` (plus a `window.OriDomi`
   IIFE build for script tags).
 - **Promise-based lifecycle:** `whenSettled()` awaits the animation queue and
   `destroy()` returns a `Promise`; prefer these over callback-only flows.
@@ -328,7 +328,7 @@ v2 is a TypeScript, ESM-first rewrite of the original CoffeeScript library:
 - **Framework wrappers** for React, Vue, Svelte, and Solid ship as subpath
   imports (`oridomi/react`, etc.).
 - **Stylesheet:** styles inject automatically; opt out with
-  `{ injectStyles: false }` and `import 'oridomi/oridomi.css'`.
+  `{ injectStyles: false }` and `import '@tylerbu/oridomi/oridomi.css'`.
 
 The effect and option names are unchanged from v1, so existing effect calls such
 as `accordion`, `curl`, `fracture`, and `foldUp` continue to work.
@@ -357,5 +357,13 @@ npm test           # Run unit + e2e tests
 npm run lint       # Lint with Biome
 npm run typecheck  # Type-check source and tests
 ```
+
+## Credits
+
+`@tylerbu/oridomi` is a maintained, TypeScript/ESM fork of the original
+[oriDomi](https://github.com/dmotz/oriDomi) by
+[Dan Motzenbecker](https://oxism.com) ([@dmotz](https://github.com/dmotz)),
+released under the MIT License. See the original project for demos and history at
+[oxism.com/oriDomi](https://oxism.com/oriDomi).
 
 _The DOM is your oyster._
